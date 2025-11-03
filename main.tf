@@ -1,8 +1,8 @@
 locals {
-  redis_port          = 6379
-  redis_cluster_port  = 16379
-  total_nodes         = var.redis_master_count + var.redis_replica_count
-  redis_nodes         = [for i in range(local.total_nodes) : "redis-node-${i}"]
+  redis_port         = 6379
+  redis_cluster_port = 16379
+  total_nodes        = var.redis_master_count + var.redis_replica_count
+  redis_nodes        = [for i in range(local.total_nodes) : "redis-node-${i}"]
   aws_region         = var.aws_region != null ? var.aws_region : data.aws_region.current.name
 }
 
@@ -287,15 +287,15 @@ resource "aws_lambda_function" "redis_cluster_init" {
 
   environment {
     variables = {
-      ECS_CLUSTER_ARN    = aws_ecs_cluster.redis_cluster.arn
-      ECS_SERVICE_NAME   = aws_ecs_service.redis_cluster.name
-      REDIS_MASTER_COUNT = var.redis_master_count
+      ECS_CLUSTER_ARN     = aws_ecs_cluster.redis_cluster.arn
+      ECS_SERVICE_NAME    = aws_ecs_service.redis_cluster.name
+      REDIS_MASTER_COUNT  = var.redis_master_count
       REDIS_REPLICA_COUNT = var.redis_replica_count
-      CLOUDMAP_NAMESPACE = var.service_discovery_namespace
-      CLOUDMAP_SERVICE   = aws_service_discovery_service.redis.name
-      VPC_ID             = var.vpc_id
-      SUBNET_IDS         = join(",", var.subnet_ids)
-      SECURITY_GROUP_ID  = aws_security_group.redis_cluster.id
+      CLOUDMAP_NAMESPACE  = var.service_discovery_namespace
+      CLOUDMAP_SERVICE    = aws_service_discovery_service.redis.name
+      VPC_ID              = var.vpc_id
+      SUBNET_IDS          = join(",", var.subnet_ids)
+      SECURITY_GROUP_ID   = aws_security_group.redis_cluster.id
     }
   }
 
@@ -385,8 +385,8 @@ resource "aws_cloudwatch_event_rule" "ecs_service_stable" {
     source      = ["aws.ecs"]
     detail-type = ["ECS Service Action"]
     detail = {
-      eventName   = ["SERVICE_STEADY_STATE"]
-      clusterArn  = [aws_ecs_cluster.redis_cluster.arn]
+      eventName  = ["SERVICE_STEADY_STATE"]
+      clusterArn = [aws_ecs_cluster.redis_cluster.arn]
     }
   })
 
