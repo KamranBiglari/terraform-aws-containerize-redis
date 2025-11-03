@@ -348,16 +348,26 @@ resource "aws_iam_role_policy" "lambda_ecs_policy" {
       {
         Effect = "Allow"
         Action = [
+          "ecs:DescribeServices",
           "ecs:ListTasks",
           "ecs:DescribeTasks",
-          "ecs:ExecuteCommand"
+          "ecs:DescribeTaskDefinition"
         ]
         Resource = "*"
       },
       {
         Effect = "Allow"
         Action = [
-          "servicediscovery:DiscoverInstances"
+          "servicediscovery:DiscoverInstances",
+          "servicediscovery:GetNamespace",
+          "servicediscovery:GetService"
+        ]
+        Resource = "*"
+      },
+      {
+        Effect = "Allow"
+        Action = [
+          "ec2:DescribeNetworkInterfaces"
         ]
         Resource = "*"
       }
