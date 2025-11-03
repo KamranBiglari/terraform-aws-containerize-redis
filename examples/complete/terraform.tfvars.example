@@ -1,0 +1,12 @@
+# Copy this file to terraform.tfvars and fill in your values
+
+aws_region   = "us-east-1"
+cluster_name = "my-redis-cluster"
+
+# Your VPC and Subnet IDs
+vpc_id = "vpc-xxxxxxxxx"
+subnet_ids = [
+  "subnet-xxxxxxxxx",  # Private subnet 1
+  "subnet-yyyyyyyyy",  # Private subnet 2
+  "subnet-zzzzzzzzz"   # Private subnet 3
+]
