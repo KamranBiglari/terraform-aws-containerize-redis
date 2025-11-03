@@ -111,7 +111,7 @@ variable "enable_ecs_exec" {
 }
 
 variable "enable_cluster_init" {
-  description = "Enable automatic cluster initialization using Lambda"
+  description = "Enable automatic cluster initialization using Lambda via ECS Exec (automatically enables ECS Exec on the service)"
   type        = bool
   default     = true
 }

@@ -263,14 +263,26 @@ resource "aws_ecs_service" "redis_cluster" {
     rollback = true
   }
 
-  # Enable ECS Exec if needed for debugging
-  enable_execute_command = var.enable_ecs_exec
+  # Enable ECS Exec if needed for debugging or Lambda-based cluster initialization
+  enable_execute_command = var.enable_ecs_exec || var.enable_cluster_init
 
   tags = var.tags
 
   depends_on = [
     aws_iam_role_policy_attachment.ecs_task_execution_role_policy
   ]
+}
+
+# Lambda Layer with redis-py dependency
+resource "aws_lambda_layer_version" "redis_layer" {
+  count = var.enable_cluster_init ? 1 : 0
+
+  filename            = "${path.module}/lambda/redis_layer.zip"
+  layer_name          = "${var.cluster_name}-redis-layer"
+  compatible_runtimes = ["python3.11", "python3.10", "python3.9"]
+  source_code_hash    = data.archive_file.lambda_layer[0].output_base64sha256
+
+  description = "Redis Python library for cluster initialization"
 }
 
 # Lambda function to initialize Redis cluster
@@ -284,6 +296,7 @@ resource "aws_lambda_function" "redis_cluster_init" {
   source_code_hash = data.archive_file.lambda_zip[0].output_base64sha256
   runtime          = "python3.11"
   timeout          = 300
+  layers           = [aws_lambda_layer_version.redis_layer[0].arn]
 
   environment {
     variables = {
@@ -351,7 +364,8 @@ resource "aws_iam_role_policy" "lambda_ecs_policy" {
           "ecs:DescribeServices",
           "ecs:ListTasks",
           "ecs:DescribeTasks",
-          "ecs:DescribeTaskDefinition"
+          "ecs:DescribeTaskDefinition",
+          "ecs:ExecuteCommand"
         ]
         Resource = "*"
       },
@@ -370,6 +384,23 @@ resource "aws_iam_role_policy" "lambda_ecs_policy" {
           "ec2:DescribeNetworkInterfaces"
         ]
         Resource = "*"
+      },
+      {
+        Effect = "Allow"
+        Action = [
+          "ssm:StartSession",
+          "ssm:SendCommand"
+        ]
+        Resource = "*"
+      },
+      {
+        Effect = "Allow"
+        Action = [
+          "logs:DescribeLogGroups",
+          "logs:CreateLogStream",
+          "logs:PutLogEvents"
+        ]
+        Resource = "*"
       }
     ]
   })
@@ -382,6 +413,36 @@ data "archive_file" "lambda_zip" {
   type        = "zip"
   source_file = "${path.module}/lambda/index.py"
   output_path = "${path.module}/lambda/redis_cluster_init.zip"
+}
+
+# Create Lambda Layer with redis-py
+# Note: This requires running a build script first to install dependencies
+# See lambda/build_layer.sh
+data "archive_file" "lambda_layer" {
+  count = var.enable_cluster_init ? 1 : 0
+
+  type        = "zip"
+  source_dir  = "${path.module}/lambda/layer"
+  output_path = "${path.module}/lambda/redis_layer.zip"
+
+  depends_on = [null_resource.build_lambda_layer]
+}
+
+# Build the Lambda layer with dependencies
+resource "null_resource" "build_lambda_layer" {
+  count = var.enable_cluster_init ? 1 : 0
+
+  triggers = {
+    requirements = filemd5("${path.module}/lambda/requirements.txt")
+  }
+
+  provisioner "local-exec" {
+    interpreter = [
+      "bash", "-i", "-c"
+    ]
+    command     = "bash ./lambda/build_layer.sh"
+    working_dir = path.module
+  }
 }
 
 # CloudWatch Event Rule to trigger Lambda after service stabilizes
