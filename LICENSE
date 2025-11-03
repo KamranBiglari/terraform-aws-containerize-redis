@@ -1,21 +1,66 @@
-MIT License
+# Dual License
+
+This software is available under a dual licensing model:
+
+## 1. Open Source License (AGPL-3.0)
+
+For individuals, open source projects, and non-commercial use, this software is licensed under the GNU Affero General Public License v3.0 (AGPL-3.0).
+
+See the full license text in [LICENSE-AGPL](LICENSE-AGPL) or visit:
+https://www.gnu.org/licenses/agpl-3.0.html
+
+### What this means:
+- ✅ Free to use for personal, educational, and open source projects
+- ✅ Must include copyright notice and license
+- ✅ Must share your source code modifications
+- ✅ If you modify and use this as a service, you must open source your entire application
+
+## 2. Commercial License
+
+For commercial, business, or proprietary use, you must obtain a commercial license.
+
+### Commercial use includes:
+- Using this software within a business or organization
+- Providing SaaS/cloud services to customers using this software
+- Embedding this software in proprietary products
+- Any for-profit usage where you don't want to open source your code
+
+### How to obtain a commercial license:
+Contact: kamran@kamranonline.uk
+
+### Benefits of commercial license:
+- ✅ No requirement to open source your application
+- ✅ Use in closed-source/proprietary products
+- ✅ Priority support options available
+- ✅ Custom licensing terms available
+
+---
+
+## Copyright
 
 Copyright (c) 2025 Kamran Biglari
 
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
+All rights reserved.
 
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
+## Choosing Your License
 
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
+**Use AGPL-3.0 if:**
+- You're an individual or hobbyist
+- Your project is open source
+- You're using it for learning/education
+- You're willing to open source your modifications and application
+
+**Get a Commercial License if:**
+- You're a business or commercial entity
+- You want to keep your code proprietary
+- You're building a SaaS product
+- You don't want AGPL's copyleft requirements
+
+## Questions?
+
+If you're unsure which license applies to your use case, please contact:
+kamran@kamranonline.uk
+
+---
+
+**Disclaimer:** THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.

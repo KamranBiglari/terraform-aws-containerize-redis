@@ -415,7 +415,7 @@ dig redis-cluster.redis.local
 
 ## License
 
-MIT License - See [LICENSE](LICENSE) file for details.
+ See [LICENSE](LICENSE) file for details.
 
 ## Contributing
 
