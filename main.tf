@@ -152,7 +152,7 @@ resource "aws_service_discovery_private_dns_namespace" "redis" {
 
 # CloudMap Service for Redis Cluster
 resource "aws_service_discovery_service" "redis" {
-  name = "redis-cluster"
+  name = var.service_discovery_name
 
   dns_config {
     namespace_id = aws_service_discovery_private_dns_namespace.redis.id
@@ -229,7 +229,16 @@ resource "aws_ecs_task_definition" "redis_node" {
         startPeriod = 60
       }
 
-      environment = var.redis_environment_variables
+      environment = concat([
+        {
+          name  = "REDIS_PORT"
+          value = tostring(local.redis_port)
+        },
+        {
+          name  = "REDIS_CLUSTER_PORT"
+          value = tostring(local.redis_cluster_port)
+        }
+      ], var.redis_environment_variables)
     }
   ])
 
@@ -313,6 +322,8 @@ resource "aws_lambda_function" "redis_cluster_init" {
       VPC_ID              = var.vpc_id
       SUBNET_IDS          = join(",", var.subnet_ids)
       SECURITY_GROUP_ID   = aws_security_group.redis_cluster.id
+      REDIS_PORT          = tostring(local.redis_port)
+      REDIS_CLUSTER_PORT  = tostring(local.redis_cluster_port)
     }
   }
 

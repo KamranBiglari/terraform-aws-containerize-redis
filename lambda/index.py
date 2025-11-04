@@ -24,6 +24,8 @@ def handler(event, context):
     replica_count = int(os.environ['REDIS_REPLICA_COUNT'])
     namespace = os.environ['CLOUDMAP_NAMESPACE']
     service = os.environ['CLOUDMAP_SERVICE']
+    redis_port = int(os.environ.get('REDIS_PORT', '6379'))
+    redis_cluster_port = int(os.environ.get('REDIS_CLUSTER_PORT', '16379'))
 
     total_nodes = master_count + replica_count
     replicas_per_master = replica_count // master_count if master_count > 0 else 0
@@ -54,7 +56,7 @@ def handler(event, context):
         print(f"Task ARNs: {task_arns}")
 
         # Check if cluster is already initialized
-        if is_cluster_initialized(node_ips[0]):
+        if is_cluster_initialized(node_ips[0], redis_port):
             print("Redis cluster is already initialized")
             return {
                 'statusCode': 200,
@@ -63,7 +65,7 @@ def handler(event, context):
 
         # Create cluster by connecting directly to Redis nodes
         print("Initializing Redis cluster...")
-        create_cluster_direct(node_ips, replicas_per_master)
+        create_cluster_direct(node_ips, replicas_per_master, redis_port)
 
         print("Redis cluster initialized successfully!")
         return {
@@ -142,7 +144,7 @@ def get_redis_nodes(cluster_arn: str, service_name: str) -> Tuple[List[str], Lis
     return task_arns, ips
 
 
-def is_cluster_initialized(node_ip: str) -> bool:
+def is_cluster_initialized(node_ip: str, redis_port: int = 6379) -> bool:
     """
     Check if Redis cluster is already initialized by connecting directly to a node.
     Lambda is in the same VPC, so it can reach the nodes directly.
@@ -150,10 +152,10 @@ def is_cluster_initialized(node_ip: str) -> bool:
     try:
         import redis
 
-        print(f"Checking cluster status on {node_ip}...")
+        print(f"Checking cluster status on {node_ip}:{redis_port}...")
 
         # Connect to the node
-        node_conn = redis.Redis(host=node_ip, port=6379, decode_responses=True, socket_connect_timeout=5)
+        node_conn = redis.Redis(host=node_ip, port=redis_port, decode_responses=True, socket_connect_timeout=5)
 
         # Try to get cluster info
         cluster_info = node_conn.execute_command('CLUSTER', 'INFO')
@@ -179,7 +181,7 @@ def is_cluster_initialized(node_ip: str) -> bool:
         return False
 
 
-def create_cluster_direct(node_ips: List[str], replicas_per_master: int):
+def create_cluster_direct(node_ips: List[str], replicas_per_master: int, redis_port: int = 6379):
     """
     Create Redis cluster by using Python redis library to connect directly to nodes.
     Lambda is in the same VPC as the Redis tasks, so it can reach them.
@@ -189,12 +191,13 @@ def create_cluster_direct(node_ips: List[str], replicas_per_master: int):
 
         print(f"Creating cluster with nodes: {node_ips}")
         print(f"Replicas per master: {replicas_per_master}")
+        print(f"Redis port: {redis_port}")
 
         # First, reset all nodes to clean state in case of previous failed attempts
         print("Resetting all nodes to clean state...")
         for ip in node_ips:
             try:
-                node_conn = redis.Redis(host=ip, port=6379, decode_responses=True, socket_connect_timeout=5)
+                node_conn = redis.Redis(host=ip, port=redis_port, decode_responses=True, socket_connect_timeout=5)
                 # Check if node has any cluster configuration
                 cluster_info = node_conn.execute_command('CLUSTER', 'INFO')
                 cluster_info_str = cluster_info.decode('utf-8') if isinstance(cluster_info, bytes) else str(cluster_info)
@@ -213,18 +216,18 @@ def create_cluster_direct(node_ips: List[str], replicas_per_master: int):
         print("All nodes reset. Starting cluster creation...")
 
         # Build node list
-        nodes = [{'host': ip, 'port': 6379} for ip in node_ips]
+        nodes = [{'host': ip, 'port': redis_port} for ip in node_ips]
 
         # Use redis-py-cluster or direct redis commands
         # First, let's try to create the cluster using CLUSTER MEET commands
 
         # Connect to first node as coordinator
-        coordinator = redis.Redis(host=node_ips[0], port=6379, decode_responses=True)
+        coordinator = redis.Redis(host=node_ips[0], port=redis_port, decode_responses=True)
 
         # Make all nodes meet each other
         print("Making nodes meet each other...")
         for ip in node_ips[1:]:
-            coordinator.execute_command('CLUSTER', 'MEET', ip, 6379)
+            coordinator.execute_command('CLUSTER', 'MEET', ip, redis_port)
             print(f"Node {node_ips[0]} met {ip}")
             time.sleep(1)
 
@@ -241,10 +244,10 @@ def create_cluster_direct(node_ips: List[str], replicas_per_master: int):
             start_slot = i * slots_per_master
             end_slot = (i + 1) * slots_per_master - 1 if i < master_count - 1 else 16383
 
-            node_conn = redis.Redis(host=node_ips[i], port=6379, decode_responses=True)
+            node_conn = redis.Redis(host=node_ips[i], port=redis_port, decode_responses=True)
             node_id = node_conn.execute_command('CLUSTER', 'MYID')
 
-            print(f"Assigning slots {start_slot}-{end_slot} to node {node_ips[i]} (ID: {node_id})")
+            print(f"Assigning slots {start_slot}-{end_slot} to node {node_ips[i]}:{redis_port} (ID: {node_id})")
 
             # Assign slots in batches for better performance
             batch_size = 100
@@ -258,11 +261,11 @@ def create_cluster_direct(node_ips: List[str], replicas_per_master: int):
             print("Setting up replication...")
             master_idx = 0
             for i in range(master_count, len(node_ips)):
-                replica_conn = redis.Redis(host=node_ips[i], port=6379, decode_responses=True)
-                master_conn = redis.Redis(host=node_ips[master_idx], port=6379, decode_responses=True)
+                replica_conn = redis.Redis(host=node_ips[i], port=redis_port, decode_responses=True)
+                master_conn = redis.Redis(host=node_ips[master_idx], port=redis_port, decode_responses=True)
                 master_id = master_conn.execute_command('CLUSTER', 'MYID')
 
-                print(f"Making {node_ips[i]} a replica of {node_ips[master_idx]} (ID: {master_id})")
+                print(f"Making {node_ips[i]}:{redis_port} a replica of {node_ips[master_idx]}:{redis_port} (ID: {master_id})")
                 replica_conn.execute_command('CLUSTER', 'REPLICATE', master_id)
 
                 master_idx = (master_idx + 1) % master_count

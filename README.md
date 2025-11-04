@@ -108,6 +108,7 @@ module "redis_cluster" {
   log_retention_days       = 30
 
   # Environment Variables (optional)
+  # Note: REDIS_PORT and REDIS_CLUSTER_PORT are automatically set
   redis_environment_variables = [
     {
       name  = "TZ"
@@ -332,42 +333,6 @@ To scale the cluster:
 
 Use AWS Pricing Calculator for exact estimates.
 
-## Inputs
-
-| Name | Description | Type | Default | Required |
-|------|-------------|------|---------|----------|
-| cluster_name | Name prefix for Redis cluster resources | string | - | yes |
-| vpc_id | VPC ID for deployment | string | - | yes |
-| subnet_ids | List of subnet IDs | list(string) | - | yes |
-| aws_region | AWS region | string | - | yes |
-| redis_master_count | Number of master nodes (min 3) | number | 3 | no |
-| redis_replica_count | Number of replica nodes | number | 3 | no |
-| redis_image | Redis Docker image | string | redis:7.2-alpine | no |
-| task_cpu | CPU units (256, 512, 1024, 2048, 4096) | number | 512 | no |
-| task_memory | Memory in MB | number | 1024 | no |
-| allowed_cidr_blocks | CIDRs allowed to connect | list(string) | [] | no |
-| service_discovery_namespace | CloudMap namespace | string | redis.local | no |
-| assign_public_ip | Assign public IP to tasks | bool | false | no |
-| enable_container_insights | Enable Container Insights | bool | true | no |
-| enable_ecs_exec | Enable ECS Exec | bool | false | no |
-| enable_cluster_init | Enable automatic initialization | bool | true | no |
-| log_retention_days | CloudWatch log retention | number | 7 | no |
-| tags | Tags for all resources | map(string) | {} | no |
-
-## Outputs
-
-| Name | Description |
-|------|-------------|
-| ecs_cluster_id | ECS cluster ID |
-| ecs_cluster_name | ECS cluster name |
-| ecs_service_name | ECS service name |
-| security_group_id | Security group ID |
-| redis_endpoints | CloudMap DNS endpoint |
-| redis_port | Redis port (6379) |
-| cloudwatch_log_group_name | Log group name |
-| total_nodes | Total number of nodes |
-| master_count | Number of masters |
-| replica_count | Number of replicas |
 
 ## Troubleshooting
 
@@ -435,3 +400,112 @@ For issues and questions:
 - [AWS CloudMap](https://docs.aws.amazon.com/cloud-map/latest/dg/what-is-cloud-map.html)
 - [Redis on AWS](https://aws.amazon.com/redis/)
 
+
+
+
+<!-- BEGIN_TF_DOCS -->
+
+
+## Requirements
+
+## Requirements
+
+| Name | Version |
+|------|---------|
+| <a name="requirement_terraform"></a> [terraform](#requirement\_terraform) | >= 1.0 |
+| <a name="requirement_archive"></a> [archive](#requirement\_archive) | >= 2.0 |
+| <a name="requirement_aws"></a> [aws](#requirement\_aws) | >= 5.0 |
+
+## Providers
+
+## Providers
+
+| Name | Version |
+|------|---------|
+| <a name="provider_archive"></a> [archive](#provider\_archive) | >= 2.0 |
+| <a name="provider_aws"></a> [aws](#provider\_aws) | >= 5.0 |
+| <a name="provider_null"></a> [null](#provider\_null) | n/a |
+
+## Resources
+
+## Resources
+
+| Name | Type |
+|------|------|
+| [aws_cloudwatch_event_rule.ecs_service_stable](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/cloudwatch_event_rule) | resource |
+| [aws_cloudwatch_event_target.lambda](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/cloudwatch_event_target) | resource |
+| [aws_cloudwatch_log_group.redis](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/cloudwatch_log_group) | resource |
+| [aws_ecs_cluster.redis_cluster](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/ecs_cluster) | resource |
+| [aws_ecs_service.redis_cluster](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/ecs_service) | resource |
+| [aws_ecs_task_definition.redis_node](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/ecs_task_definition) | resource |
+| [aws_iam_role.ecs_task_execution_role](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/iam_role) | resource |
+| [aws_iam_role.ecs_task_role](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/iam_role) | resource |
+| [aws_iam_role.lambda_exec](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/iam_role) | resource |
+| [aws_iam_role_policy.ecs_task_cloudmap_policy](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/iam_role_policy) | resource |
+| [aws_iam_role_policy.lambda_ecs_policy](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/iam_role_policy) | resource |
+| [aws_iam_role_policy_attachment.ecs_task_execution_role_policy](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/iam_role_policy_attachment) | resource |
+| [aws_iam_role_policy_attachment.lambda_vpc_execution](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/iam_role_policy_attachment) | resource |
+| [aws_lambda_function.redis_cluster_init](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/lambda_function) | resource |
+| [aws_lambda_layer_version.redis_layer](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/lambda_layer_version) | resource |
+| [aws_lambda_permission.allow_cloudwatch](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/lambda_permission) | resource |
+| [aws_security_group.redis_cluster](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/security_group) | resource |
+| [aws_service_discovery_private_dns_namespace.redis](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/service_discovery_private_dns_namespace) | resource |
+| [aws_service_discovery_service.redis](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/service_discovery_service) | resource |
+| [null_resource.build_lambda_layer](https://registry.terraform.io/providers/hashicorp/null/latest/docs/resources/resource) | resource |
+
+## Inputs
+
+## Inputs
+
+| Name | Description | Type | Default | Required |
+|------|-------------|------|---------|:--------:|
+| <a name="input_cluster_name"></a> [cluster\_name](#input\_cluster\_name) | Name prefix for the Redis cluster resources | `string` | n/a | yes |
+| <a name="input_subnet_ids"></a> [subnet\_ids](#input\_subnet\_ids) | List of subnet IDs for Redis tasks (use private subnets) | `list(string)` | n/a | yes |
+| <a name="input_vpc_id"></a> [vpc\_id](#input\_vpc\_id) | VPC ID where Redis cluster will be deployed | `string` | n/a | yes |
+| <a name="input_allowed_cidr_blocks"></a> [allowed\_cidr\_blocks](#input\_allowed\_cidr\_blocks) | CIDR blocks allowed to connect to Redis cluster | `list(string)` | `[]` | no |
+| <a name="input_assign_public_ip"></a> [assign\_public\_ip](#input\_assign\_public\_ip) | Assign public IP to tasks (set to true if using public subnets) | `bool` | `false` | no |
+| <a name="input_aws_region"></a> [aws\_region](#input\_aws\_region) | AWS region for deployment | `string` | `null` | no |
+| <a name="input_ecs_service_config_tags"></a> [ecs\_service\_config\_tags](#input\_ecs\_service\_config\_tags) | Tags to apply to aws ecs service | `map(string)` | <pre>{<br/>  "desired_count": "Config:desiredCount"<br/>}</pre> | no |
+| <a name="input_enable_cluster_init"></a> [enable\_cluster\_init](#input\_enable\_cluster\_init) | Enable automatic cluster initialization using Lambda via ECS Exec (automatically enables ECS Exec on the service) | `bool` | `true` | no |
+| <a name="input_enable_container_insights"></a> [enable\_container\_insights](#input\_enable\_container\_insights) | Enable CloudWatch Container Insights for the ECS cluster | `bool` | `true` | no |
+| <a name="input_enable_ecs_exec"></a> [enable\_ecs\_exec](#input\_enable\_ecs\_exec) | Enable ECS Exec for debugging tasks | `bool` | `false` | no |
+| <a name="input_log_retention_days"></a> [log\_retention\_days](#input\_log\_retention\_days) | CloudWatch log retention in days | `number` | `7` | no |
+| <a name="input_redis_cluster_port"></a> [redis\_cluster\_port](#input\_redis\_cluster\_port) | Port for Redis Cluster bus | `number` | `16379` | no |
+| <a name="input_redis_environment_variables"></a> [redis\_environment\_variables](#input\_redis\_environment\_variables) | Additional environment variables for Redis containers | <pre>list(object({<br/>    name  = string<br/>    value = string<br/>  }))</pre> | `[]` | no |
+| <a name="input_redis_image"></a> [redis\_image](#input\_redis\_image) | Docker image for Redis (must support cluster mode) | `string` | `"redis:7.2-alpine"` | no |
+| <a name="input_redis_master_count"></a> [redis\_master\_count](#input\_redis\_master\_count) | Number of Redis master nodes in the cluster | `number` | `3` | no |
+| <a name="input_redis_port"></a> [redis\_port](#input\_redis\_port) | Port for Redis | `number` | `6379` | no |
+| <a name="input_redis_replica_count"></a> [redis\_replica\_count](#input\_redis\_replica\_count) | Number of Redis replica nodes (total replicas, not per master) | `number` | `3` | no |
+| <a name="input_service_discovery_name"></a> [service\_discovery\_name](#input\_service\_discovery\_name) | CloudMap service name for Redis | `string` | `"redis-cluster"` | no |
+| <a name="input_service_discovery_namespace"></a> [service\_discovery\_namespace](#input\_service\_discovery\_namespace) | CloudMap namespace for service discovery | `string` | `"redis.local"` | no |
+| <a name="input_tags"></a> [tags](#input\_tags) | Tags to apply to all resources | `map(string)` | `{}` | no |
+| <a name="input_task_cpu"></a> [task\_cpu](#input\_task\_cpu) | CPU units for Redis task (1024 = 1 vCPU) | `number` | `256` | no |
+| <a name="input_task_memory"></a> [task\_memory](#input\_task\_memory) | Memory for Redis task in MB | `number` | `1024` | no |
+
+## Outputs
+
+## Outputs
+
+| Name | Description |
+|------|-------------|
+| <a name="output_cloudmap_namespace_id"></a> [cloudmap\_namespace\_id](#output\_cloudmap\_namespace\_id) | CloudMap namespace ID |
+| <a name="output_cloudmap_namespace_name"></a> [cloudmap\_namespace\_name](#output\_cloudmap\_namespace\_name) | CloudMap namespace name |
+| <a name="output_cloudmap_service_id"></a> [cloudmap\_service\_id](#output\_cloudmap\_service\_id) | CloudMap service ID |
+| <a name="output_cloudmap_service_name"></a> [cloudmap\_service\_name](#output\_cloudmap\_service\_name) | CloudMap service name |
+| <a name="output_cloudwatch_log_group_name"></a> [cloudwatch\_log\_group\_name](#output\_cloudwatch\_log\_group\_name) | CloudWatch log group name |
+| <a name="output_ecs_cluster_arn"></a> [ecs\_cluster\_arn](#output\_ecs\_cluster\_arn) | ECS cluster ARN |
+| <a name="output_ecs_cluster_id"></a> [ecs\_cluster\_id](#output\_ecs\_cluster\_id) | ECS cluster ID |
+| <a name="output_ecs_cluster_name"></a> [ecs\_cluster\_name](#output\_ecs\_cluster\_name) | ECS cluster name |
+| <a name="output_ecs_service_id"></a> [ecs\_service\_id](#output\_ecs\_service\_id) | ECS service ID |
+| <a name="output_ecs_service_name"></a> [ecs\_service\_name](#output\_ecs\_service\_name) | ECS service name |
+| <a name="output_elasticache_compatible"></a> [elasticache\_compatible](#output\_elasticache\_compatible) | Whether the configuration is compatible with ElastiCache |
+| <a name="output_lambda_function_name"></a> [lambda\_function\_name](#output\_lambda\_function\_name) | Lambda function name for cluster initialization |
+| <a name="output_master_count"></a> [master\_count](#output\_master\_count) | Number of master nodes |
+| <a name="output_redis_cluster_port"></a> [redis\_cluster\_port](#output\_redis\_cluster\_port) | Redis cluster bus port |
+| <a name="output_redis_endpoints"></a> [redis\_endpoints](#output\_redis\_endpoints) | Redis cluster endpoints (use CloudMap DNS for discovery) |
+| <a name="output_redis_port"></a> [redis\_port](#output\_redis\_port) | Redis port |
+| <a name="output_replica_count"></a> [replica\_count](#output\_replica\_count) | Number of replica nodes |
+| <a name="output_security_group_id"></a> [security\_group\_id](#output\_security\_group\_id) | Security group ID for Redis cluster |
+| <a name="output_task_definition_arn"></a> [task\_definition\_arn](#output\_task\_definition\_arn) | ECS task definition ARN |
+| <a name="output_total_nodes"></a> [total\_nodes](#output\_total\_nodes) | Total number of Redis nodes (masters + replicas) |
+<!-- END_TF_DOCS -->

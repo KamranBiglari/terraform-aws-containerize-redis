@@ -19,6 +19,28 @@ variable "allowed_cidr_blocks" {
   default     = []
 }
 
+variable "redis_port" {
+  description = "Port for Redis"
+  type        = number
+  default     = 6379
+
+  validation {
+    condition     = var.redis_port > 0 && var.redis_port < 65536
+    error_message = "Redis port must be between 1 and 65535."
+  }
+}
+
+variable "redis_cluster_port" {
+  description = "Port for Redis Cluster bus"
+  type        = number
+  default     = 16379
+
+  validation {
+    condition     = var.redis_cluster_port > 0 && var.redis_cluster_port < 65536
+    error_message = "Redis cluster port must be between 1 and 65535."
+  }
+}
+
 variable "redis_master_count" {
   description = "Number of Redis master nodes in the cluster"
   type        = number
@@ -79,6 +101,13 @@ variable "service_discovery_namespace" {
   description = "CloudMap namespace for service discovery"
   type        = string
   default     = "redis.local"
+}
+
+
+variable "service_discovery_name" {
+  description = "CloudMap service name for Redis"
+  type       = string
+  default    = "redis-cluster"
 }
 
 variable "assign_public_ip" {

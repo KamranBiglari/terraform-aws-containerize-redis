@@ -55,12 +55,12 @@ output "redis_endpoints" {
 
 output "redis_port" {
   description = "Redis port"
-  value       = 6379
+  value       = local.redis_port
 }
 
 output "redis_cluster_port" {
   description = "Redis cluster bus port"
-  value       = 16379
+  value       = local.redis_cluster_port
 }
 
 output "task_definition_arn" {
@@ -91,4 +91,27 @@ output "master_count" {
 output "replica_count" {
   description = "Number of replica nodes"
   value       = var.redis_replica_count
+}
+
+output "elasticache_compatible" {
+  description = "Whether the configuration is compatible with ElastiCache"
+  value = {
+    elasticache_auth_token = ""
+    elasticache_parameter_group_id = null
+    elasticache_port = local.redis_port
+    elasticache_replication_group_arn = null
+    elasticache_replication_group_id = var.service_discovery_name
+
+    elasticache_replication_group_primary_endpoint_address = "${aws_service_discovery_service.redis.name}.${aws_service_discovery_private_dns_namespace.redis.name}"
+    elasticache_replication_group_reader_endpoint_address = "${aws_service_discovery_service.redis.name}.${aws_service_discovery_private_dns_namespace.redis.name}"
+
+    security_group_arn = aws_security_group.redis_cluster.arn
+    security_group_description = aws_security_group.redis_cluster.description
+    security_group_id = aws_security_group.redis_cluster.id
+    security_group_egress = aws_security_group.redis_cluster.egress
+    security_group_ingress = aws_security_group.redis_cluster.ingress
+    security_group_name = aws_security_group.redis_cluster.name
+    security_group_owner_id = aws_security_group.redis_cluster.owner_id
+    security_group_vpc_id = aws_security_group.redis_cluster.vpc_id
+  }
 }
