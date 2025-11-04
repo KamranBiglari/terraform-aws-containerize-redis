@@ -278,7 +278,7 @@ resource "aws_ecs_service" "redis_cluster" {
   enable_execute_command = var.enable_ecs_exec || var.enable_cluster_init
 
   tags = merge(var.tags, {
-    var.ecs_service_config_tags["desired_count"] = tostring(local.total_nodes)
+    (var.ecs_service_config_tags["desired_count"]) = tostring(local.total_nodes)
   })
 
   depends_on = [
