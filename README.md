@@ -408,8 +408,6 @@ For issues and questions:
 
 ## Requirements
 
-## Requirements
-
 | Name | Version |
 |------|---------|
 | <a name="requirement_terraform"></a> [terraform](#requirement\_terraform) | >= 1.0 |
@@ -418,15 +416,11 @@ For issues and questions:
 
 ## Providers
 
-## Providers
-
 | Name | Version |
 |------|---------|
 | <a name="provider_archive"></a> [archive](#provider\_archive) | >= 2.0 |
 | <a name="provider_aws"></a> [aws](#provider\_aws) | >= 5.0 |
 | <a name="provider_null"></a> [null](#provider\_null) | n/a |
-
-## Resources
 
 ## Resources
 
@@ -455,8 +449,6 @@ For issues and questions:
 
 ## Inputs
 
-## Inputs
-
 | Name | Description | Type | Default | Required |
 |------|-------------|------|---------|:--------:|
 | <a name="input_cluster_name"></a> [cluster\_name](#input\_cluster\_name) | Name prefix for the Redis cluster resources | `string` | n/a | yes |
@@ -481,8 +473,6 @@ For issues and questions:
 | <a name="input_tags"></a> [tags](#input\_tags) | Tags to apply to all resources | `map(string)` | `{}` | no |
 | <a name="input_task_cpu"></a> [task\_cpu](#input\_task\_cpu) | CPU units for Redis task (1024 = 1 vCPU) | `number` | `256` | no |
 | <a name="input_task_memory"></a> [task\_memory](#input\_task\_memory) | Memory for Redis task in MB | `number` | `1024` | no |
-
-## Outputs
 
 ## Outputs
 
