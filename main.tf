@@ -263,10 +263,14 @@ resource "aws_ecs_service" "redis_cluster" {
     rollback = true
   }
 
+  propagate_tags = "SERVICE"
+
   # Enable ECS Exec if needed for debugging or Lambda-based cluster initialization
   enable_execute_command = var.enable_ecs_exec || var.enable_cluster_init
 
-  tags = var.tags
+  tags = merge(var.tags, {
+    var.ecs_service_config_tags["desired_count"] = tostring(local.total_nodes)
+  })
 
   depends_on = [
     aws_iam_role_policy_attachment.ecs_task_execution_role_policy

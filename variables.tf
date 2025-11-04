@@ -136,3 +136,11 @@ variable "tags" {
   type        = map(string)
   default     = {}
 }
+
+variable "ecs_service_config_tags" {
+  description = "Tags to apply to aws ecs service"
+  type = map(string)
+  default = {
+    "desired_count" = "Config:desiredCount"
+  }
+}
