@@ -53,7 +53,7 @@ This module creates:
 
 ```hcl
 module "redis_cluster" {
-  source = "github.com/kamranbiglari/terraform-aws-containerize-redis"
+  source = "KamranBiglari/containerize-redis/aws"
 
   cluster_name = "my-redis"
   vpc_id       = "vpc-xxxxx"
@@ -77,7 +77,7 @@ module "redis_cluster" {
 
 ```hcl
 module "redis_cluster" {
-  source = "github.com/kamranbiglari/terraform-aws-containerize-redis"
+  source = "KamranBiglari/containerize-redis/aws"
 
   # Basic Configuration
   cluster_name                = "production-redis"
