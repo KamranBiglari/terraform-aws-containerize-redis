@@ -1,4 +1,4 @@
-# Terraform AWS Redis Cluster on ECS Fargate
+# Redis Cluster on AWS ECS Fargate using Terraform
 
 A Terraform module to deploy a production-ready Redis cluster on AWS ECS Fargate with automatic service discovery using AWS CloudMap.
 
