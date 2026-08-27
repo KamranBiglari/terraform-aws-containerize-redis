@@ -1,10 +1,9 @@
+<!-- BEGIN_TF_DOCS -->
 # Redis Cluster on AWS ECS Fargate using Terraform
 
 A Terraform module to deploy a production-ready Redis cluster on AWS ECS Fargate with automatic service discovery using AWS CloudMap.
 
-
 ![AWS ECS Fargate](https://raw.githubusercontent.com/KamranBiglari/terraform-aws-containerize-redis/main/images/aws_ecs_fargate.png)
-
 
 ![AWS ECS Fargate](https://raw.githubusercontent.com/KamranBiglari/terraform-aws-containerize-redis/main/images/redis_insight.png)
 
@@ -333,7 +332,6 @@ To scale the cluster:
 
 Use AWS Pricing Calculator for exact estimates.
 
-
 ## Troubleshooting
 
 ### Tasks Not Starting
@@ -375,7 +373,7 @@ dig redis-cluster.redis.local
 ### High Memory Usage
 
 - Increase `task_memory`
-- Enable Redis maxmemory policies in redis_environment_variables
+- Enable Redis maxmemory policies in redis\_environment\_variables
 - Monitor with Container Insights
 
 ## License
@@ -400,11 +398,7 @@ For issues and questions:
 - [AWS CloudMap](https://docs.aws.amazon.com/cloud-map/latest/dg/what-is-cloud-map.html)
 - [Redis on AWS](https://aws.amazon.com/redis/)
 
-
-
-
-<!-- BEGIN_TF_DOCS -->
-
+## Requirements
 
 ## Requirements
 
@@ -416,11 +410,15 @@ For issues and questions:
 
 ## Providers
 
+## Providers
+
 | Name | Version |
 |------|---------|
 | <a name="provider_archive"></a> [archive](#provider\_archive) | >= 2.0 |
 | <a name="provider_aws"></a> [aws](#provider\_aws) | >= 5.0 |
 | <a name="provider_null"></a> [null](#provider\_null) | n/a |
+
+## Resources
 
 ## Resources
 
@@ -446,6 +444,8 @@ For issues and questions:
 | [aws_service_discovery_private_dns_namespace.redis](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/service_discovery_private_dns_namespace) | resource |
 | [aws_service_discovery_service.redis](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/service_discovery_service) | resource |
 | [null_resource.build_lambda_layer](https://registry.terraform.io/providers/hashicorp/null/latest/docs/resources/resource) | resource |
+
+## Inputs
 
 ## Inputs
 
@@ -479,6 +479,8 @@ For issues and questions:
 | <a name="input_tags"></a> [tags](#input\_tags) | Tags to apply to all resources | `map(string)` | `{}` | no |
 | <a name="input_task_cpu"></a> [task\_cpu](#input\_task\_cpu) | CPU units for Redis task (1024 = 1 vCPU) | `number` | `256` | no |
 | <a name="input_task_memory"></a> [task\_memory](#input\_task\_memory) | Memory for Redis task in MB | `number` | `1024` | no |
+
+## Outputs
 
 ## Outputs
 

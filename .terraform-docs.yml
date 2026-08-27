@@ -2,7 +2,7 @@ formatter: "markdown table"
 
 version: ""
 
-header-from: README.md
+header-from: DOCS.md
 
 footer-from: ""
 
@@ -39,7 +39,7 @@ content: |-
   {{ .Outputs }}
 
 output:
-  file: "TERRAFORM_DOCS.md"
+  file: "README.md"
   mode: inject
   template: |-
     <!-- BEGIN_TF_DOCS -->
