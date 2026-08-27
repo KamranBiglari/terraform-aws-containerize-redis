@@ -1,6 +1,20 @@
 # Current AWS region
 data "aws_region" "current" {}
 
+# Existing ECS cluster to deploy into when this module does not create one
+data "aws_ecs_cluster" "existing" {
+  count = var.create_ecs_cluster ? 0 : 1
+
+  cluster_name = var.existing_ecs_cluster_name
+
+  lifecycle {
+    precondition {
+      condition     = var.existing_ecs_cluster_name != null
+      error_message = "existing_ecs_cluster_name must be set when create_ecs_cluster is false."
+    }
+  }
+}
+
 # Archive Lambda function
 data "archive_file" "lambda_zip" {
   count = var.enable_cluster_init ? 1 : 0

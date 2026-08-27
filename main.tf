@@ -283,11 +283,6 @@ resource "aws_ecs_service" "redis_cluster" {
 
   lifecycle {
     precondition {
-      condition     = var.create_ecs_cluster || var.existing_ecs_cluster_arn != null
-      error_message = "existing_ecs_cluster_arn must be set when create_ecs_cluster is false."
-    }
-
-    precondition {
       condition     = var.create_cloudwatch_log_group || var.existing_cloudwatch_log_group_name != null
       error_message = "existing_cloudwatch_log_group_name must be set when create_cloudwatch_log_group is false."
     }

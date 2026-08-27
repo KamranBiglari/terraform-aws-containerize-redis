@@ -175,7 +175,7 @@ variable "ecs_service_config_tags" {
 }
 
 variable "create_ecs_cluster" {
-  description = "Whether to create a new ECS cluster for the Redis service. Set to false to deploy into an existing cluster provided via `existing_ecs_cluster_arn`."
+  description = "Whether to create a new ECS cluster for the Redis service. Set to false to deploy into an existing cluster provided via `existing_ecs_cluster_name`."
   type        = bool
   default     = true
 }
@@ -186,8 +186,8 @@ variable "ecs_cluster_name" {
   default     = null
 }
 
-variable "existing_ecs_cluster_arn" {
-  description = "ARN of an existing ECS cluster to deploy the Redis service into. Required when `create_ecs_cluster` is false, ignored otherwise."
+variable "existing_ecs_cluster_name" {
+  description = "Name of an existing ECS cluster to deploy the Redis service into. Required when `create_ecs_cluster` is false, ignored otherwise. The cluster must already exist when this module is planned."
   type        = string
   default     = null
 }

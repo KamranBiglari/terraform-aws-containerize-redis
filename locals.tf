@@ -9,8 +9,8 @@ locals {
   aws_region         = var.aws_region != null ? var.aws_region : data.aws_region.current.name
 
   # Cluster the Redis service runs on: either the one this module creates or an existing one
-  ecs_cluster_arn  = var.create_ecs_cluster ? aws_ecs_cluster.redis_cluster[0].arn : var.existing_ecs_cluster_arn
-  ecs_cluster_name = var.create_ecs_cluster ? aws_ecs_cluster.redis_cluster[0].name : try(element(split("/", var.existing_ecs_cluster_arn), 1), null)
+  ecs_cluster_arn  = var.create_ecs_cluster ? aws_ecs_cluster.redis_cluster[0].arn : data.aws_ecs_cluster.existing[0].arn
+  ecs_cluster_name = var.create_ecs_cluster ? aws_ecs_cluster.redis_cluster[0].name : var.existing_ecs_cluster_name
 
   cloudwatch_log_group_name = var.create_cloudwatch_log_group ? aws_cloudwatch_log_group.redis[0].name : var.existing_cloudwatch_log_group_name
 }
