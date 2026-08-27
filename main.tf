@@ -1,14 +1,7 @@
-locals {
-  redis_port         = 6379
-  redis_cluster_port = 16379
-  total_nodes        = var.redis_master_count + var.redis_replica_count
-  redis_nodes        = [for i in range(local.total_nodes) : "redis-node-${i}"]
-  aws_region         = var.aws_region != null ? var.aws_region : data.aws_region.current.name
-}
-
 # ECS Cluster
 resource "aws_ecs_cluster" "redis_cluster" {
-  name = "${var.cluster_name}-redis"
+  count = var.create_ecs_cluster ? 1 : 0
+  name  = coalesce(var.ecs_cluster_name, "${var.cluster_name}-redis")
 
   setting {
     name  = "containerInsights"
@@ -20,7 +13,8 @@ resource "aws_ecs_cluster" "redis_cluster" {
 
 # CloudWatch Log Group
 resource "aws_cloudwatch_log_group" "redis" {
-  name              = "/ecs/${var.cluster_name}-redis"
+  count             = var.create_cloudwatch_log_group ? 1 : 0
+  name              = coalesce(var.cloudwatch_log_group_name, "/ecs/${var.cluster_name}-redis")
   retention_in_days = var.log_retention_days
 
   tags = var.tags
@@ -208,6 +202,7 @@ resource "aws_ecs_task_definition" "redis_node" {
         "--protected-mode", "no",
         "--bind", "0.0.0.0",
         "--port", tostring(local.redis_port),
+        "--cluster-port", tostring(local.redis_cluster_port),
         "--cluster-announce-port", tostring(local.redis_port),
         "--cluster-announce-bus-port", tostring(local.redis_cluster_port)
       ]
@@ -215,14 +210,14 @@ resource "aws_ecs_task_definition" "redis_node" {
       logConfiguration = {
         logDriver = "awslogs"
         options = {
-          "awslogs-group"         = aws_cloudwatch_log_group.redis.name
+          "awslogs-group"         = local.cloudwatch_log_group_name
           "awslogs-region"        = local.aws_region
           "awslogs-stream-prefix" = "redis"
         }
       }
 
       healthCheck = {
-        command     = ["CMD-SHELL", "redis-cli ping | grep PONG"]
+        command     = ["CMD-SHELL", "redis-cli -p ${local.redis_port} ping | grep PONG"]
         interval    = 30
         timeout     = 5
         retries     = 3
@@ -243,12 +238,24 @@ resource "aws_ecs_task_definition" "redis_node" {
   ])
 
   tags = var.tags
+
+  lifecycle {
+    precondition {
+      condition     = local.redis_port != local.redis_cluster_port
+      error_message = "redis_port and redis_cluster_port must be different ports."
+    }
+
+    precondition {
+      condition     = local.redis_cluster_port > 0 && local.redis_cluster_port < 65536
+      error_message = "The Redis cluster bus port must be between 1 and 65535; set redis_cluster_port explicitly when redis_port + 10000 exceeds the port range."
+    }
+  }
 }
 
 # ECS Service for Redis Cluster
 resource "aws_ecs_service" "redis_cluster" {
   name            = "${var.cluster_name}-redis-service"
-  cluster         = aws_ecs_cluster.redis_cluster.id
+  cluster         = local.ecs_cluster_arn
   task_definition = aws_ecs_task_definition.redis_node.arn
   desired_count   = local.total_nodes
   launch_type     = "FARGATE"
@@ -273,6 +280,18 @@ resource "aws_ecs_service" "redis_cluster" {
   }
 
   propagate_tags = "SERVICE"
+
+  lifecycle {
+    precondition {
+      condition     = var.create_ecs_cluster || var.existing_ecs_cluster_arn != null
+      error_message = "existing_ecs_cluster_arn must be set when create_ecs_cluster is false."
+    }
+
+    precondition {
+      condition     = var.create_cloudwatch_log_group || var.existing_cloudwatch_log_group_name != null
+      error_message = "existing_cloudwatch_log_group_name must be set when create_cloudwatch_log_group is false."
+    }
+  }
 
   # Enable ECS Exec if needed for debugging or Lambda-based cluster initialization
   enable_execute_command = var.enable_ecs_exec || var.enable_cluster_init
@@ -313,7 +332,7 @@ resource "aws_lambda_function" "redis_cluster_init" {
 
   environment {
     variables = {
-      ECS_CLUSTER_ARN     = aws_ecs_cluster.redis_cluster.arn
+      ECS_CLUSTER_ARN     = local.ecs_cluster_arn
       ECS_SERVICE_NAME    = aws_ecs_service.redis_cluster.name
       REDIS_MASTER_COUNT  = var.redis_master_count
       REDIS_REPLICA_COUNT = var.redis_replica_count
@@ -421,28 +440,6 @@ resource "aws_iam_role_policy" "lambda_ecs_policy" {
   })
 }
 
-# Archive Lambda function
-data "archive_file" "lambda_zip" {
-  count = var.enable_cluster_init ? 1 : 0
-
-  type        = "zip"
-  source_file = "${path.module}/lambda/index.py"
-  output_path = "${path.module}/lambda/redis_cluster_init.zip"
-}
-
-# Create Lambda Layer with redis-py
-# Note: This requires running a build script first to install dependencies
-# See lambda/build_layer.sh
-data "archive_file" "lambda_layer" {
-  count = var.enable_cluster_init ? 1 : 0
-
-  type        = "zip"
-  source_dir  = "${path.module}/lambda/layer"
-  output_path = "${path.module}/lambda/redis_layer.zip"
-
-  depends_on = [null_resource.build_lambda_layer]
-}
-
 # Build the Lambda layer with dependencies
 resource "null_resource" "build_lambda_layer" {
   count = var.enable_cluster_init ? 1 : 0
@@ -472,7 +469,7 @@ resource "aws_cloudwatch_event_rule" "ecs_service_stable" {
     detail-type = ["ECS Service Action"]
     detail = {
       eventName  = ["SERVICE_STEADY_STATE"]
-      clusterArn = [aws_ecs_cluster.redis_cluster.arn]
+      clusterArn = [local.ecs_cluster_arn]
     }
   })
 

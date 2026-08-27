@@ -31,12 +31,12 @@ variable "redis_port" {
 }
 
 variable "redis_cluster_port" {
-  description = "Port for Redis Cluster bus"
+  description = "Port for the Redis Cluster bus. Defaults to `redis_port` + 10000, which is the offset Redis itself uses when `cluster-port` is unset."
   type        = number
-  default     = 16379
+  default     = null
 
   validation {
-    condition     = var.redis_cluster_port > 0 && var.redis_cluster_port < 65536
+    condition     = var.redis_cluster_port == null || (var.redis_cluster_port > 0 && var.redis_cluster_port < 65536)
     error_message = "Redis cluster port must be between 1 and 65535."
   }
 }
@@ -106,8 +106,8 @@ variable "service_discovery_namespace" {
 
 variable "service_discovery_name" {
   description = "CloudMap service name for Redis"
-  type       = string
-  default    = "redis-cluster"
+  type        = string
+  default     = "redis-cluster"
 }
 
 variable "assign_public_ip" {
@@ -168,8 +168,44 @@ variable "tags" {
 
 variable "ecs_service_config_tags" {
   description = "Tags to apply to aws ecs service"
-  type = map(string)
+  type        = map(string)
   default = {
     "desired_count" = "Config:desiredCount"
   }
+}
+
+variable "create_ecs_cluster" {
+  description = "Whether to create a new ECS cluster for the Redis service. Set to false to deploy into an existing cluster provided via `existing_ecs_cluster_arn`."
+  type        = bool
+  default     = true
+}
+
+variable "ecs_cluster_name" {
+  description = "Name of the ECS cluster to create. Only used when `create_ecs_cluster` is true. Defaults to `\"<cluster_name>-redis\"`."
+  type        = string
+  default     = null
+}
+
+variable "existing_ecs_cluster_arn" {
+  description = "ARN of an existing ECS cluster to deploy the Redis service into. Required when `create_ecs_cluster` is false, ignored otherwise."
+  type        = string
+  default     = null
+}
+
+variable "create_cloudwatch_log_group" {
+  description = "Whether to create a CloudWatch log group for the Redis tasks. Set to false to log into an existing group provided via `existing_cloudwatch_log_group_name`."
+  type        = bool
+  default     = true
+}
+
+variable "cloudwatch_log_group_name" {
+  description = "Name of the CloudWatch log group to create. Only used when `create_cloudwatch_log_group` is true. Defaults to `\"/ecs/<cluster_name>-redis\"`."
+  type        = string
+  default     = null
+}
+
+variable "existing_cloudwatch_log_group_name" {
+  description = "Name of an existing CloudWatch log group to send Redis task logs to. Required when `create_cloudwatch_log_group` is false, ignored otherwise."
+  type        = string
+  default     = null
 }

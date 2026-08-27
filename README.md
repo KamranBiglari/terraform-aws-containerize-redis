@@ -225,8 +225,8 @@ redis-cli --cluster create \
 
 The module creates a security group with:
 
-- **Port 6379** - Redis client connections (from `allowed_cidr_blocks`)
-- **Port 16379** - Redis cluster bus (inter-node communication only)
+- **Port 6379** (`redis_port`) - Redis client connections (from `allowed_cidr_blocks`)
+- **Port 16379** (`redis_cluster_port`, default `redis_port` + 10000) - Redis cluster bus (inter-node communication only)
 
 ### Subnet Selection
 
@@ -410,7 +410,7 @@ For issues and questions:
 
 | Name | Version |
 |------|---------|
-| <a name="requirement_terraform"></a> [terraform](#requirement\_terraform) | >= 1.0 |
+| <a name="requirement_terraform"></a> [terraform](#requirement\_terraform) | >= 1.3 |
 | <a name="requirement_archive"></a> [archive](#requirement\_archive) | >= 2.0 |
 | <a name="requirement_aws"></a> [aws](#requirement\_aws) | >= 5.0 |
 
@@ -457,12 +457,18 @@ For issues and questions:
 | <a name="input_allowed_cidr_blocks"></a> [allowed\_cidr\_blocks](#input\_allowed\_cidr\_blocks) | CIDR blocks allowed to connect to Redis cluster | `list(string)` | `[]` | no |
 | <a name="input_assign_public_ip"></a> [assign\_public\_ip](#input\_assign\_public\_ip) | Assign public IP to tasks (set to true if using public subnets) | `bool` | `false` | no |
 | <a name="input_aws_region"></a> [aws\_region](#input\_aws\_region) | AWS region for deployment | `string` | `null` | no |
+| <a name="input_cloudwatch_log_group_name"></a> [cloudwatch\_log\_group\_name](#input\_cloudwatch\_log\_group\_name) | Name of the CloudWatch log group to create. Only used when `create_cloudwatch_log_group` is true. Defaults to `"/ecs/<cluster_name>-redis"`. | `string` | `null` | no |
+| <a name="input_create_cloudwatch_log_group"></a> [create\_cloudwatch\_log\_group](#input\_create\_cloudwatch\_log\_group) | Whether to create a CloudWatch log group for the Redis tasks. Set to false to log into an existing group provided via `existing_cloudwatch_log_group_name`. | `bool` | `true` | no |
+| <a name="input_create_ecs_cluster"></a> [create\_ecs\_cluster](#input\_create\_ecs\_cluster) | Whether to create a new ECS cluster for the Redis service. Set to false to deploy into an existing cluster provided via `existing_ecs_cluster_arn`. | `bool` | `true` | no |
+| <a name="input_ecs_cluster_name"></a> [ecs\_cluster\_name](#input\_ecs\_cluster\_name) | Name of the ECS cluster to create. Only used when `create_ecs_cluster` is true. Defaults to `"<cluster_name>-redis"`. | `string` | `null` | no |
 | <a name="input_ecs_service_config_tags"></a> [ecs\_service\_config\_tags](#input\_ecs\_service\_config\_tags) | Tags to apply to aws ecs service | `map(string)` | <pre>{<br/>  "desired_count": "Config:desiredCount"<br/>}</pre> | no |
 | <a name="input_enable_cluster_init"></a> [enable\_cluster\_init](#input\_enable\_cluster\_init) | Enable automatic cluster initialization using Lambda via ECS Exec (automatically enables ECS Exec on the service) | `bool` | `true` | no |
 | <a name="input_enable_container_insights"></a> [enable\_container\_insights](#input\_enable\_container\_insights) | Enable CloudWatch Container Insights for the ECS cluster | `bool` | `true` | no |
 | <a name="input_enable_ecs_exec"></a> [enable\_ecs\_exec](#input\_enable\_ecs\_exec) | Enable ECS Exec for debugging tasks | `bool` | `false` | no |
+| <a name="input_existing_cloudwatch_log_group_name"></a> [existing\_cloudwatch\_log\_group\_name](#input\_existing\_cloudwatch\_log\_group\_name) | Name of an existing CloudWatch log group to send Redis task logs to. Required when `create_cloudwatch_log_group` is false, ignored otherwise. | `string` | `null` | no |
+| <a name="input_existing_ecs_cluster_arn"></a> [existing\_ecs\_cluster\_arn](#input\_existing\_ecs\_cluster\_arn) | ARN of an existing ECS cluster to deploy the Redis service into. Required when `create_ecs_cluster` is false, ignored otherwise. | `string` | `null` | no |
 | <a name="input_log_retention_days"></a> [log\_retention\_days](#input\_log\_retention\_days) | CloudWatch log retention in days | `number` | `7` | no |
-| <a name="input_redis_cluster_port"></a> [redis\_cluster\_port](#input\_redis\_cluster\_port) | Port for Redis Cluster bus | `number` | `16379` | no |
+| <a name="input_redis_cluster_port"></a> [redis\_cluster\_port](#input\_redis\_cluster\_port) | Port for the Redis Cluster bus. Defaults to `redis_port` + 10000, which is the offset Redis itself uses when `cluster-port` is unset. | `number` | `null` | no |
 | <a name="input_redis_environment_variables"></a> [redis\_environment\_variables](#input\_redis\_environment\_variables) | Additional environment variables for Redis containers | <pre>list(object({<br/>    name  = string<br/>    value = string<br/>  }))</pre> | `[]` | no |
 | <a name="input_redis_image"></a> [redis\_image](#input\_redis\_image) | Docker image for Redis (must support cluster mode) | `string` | `"redis:7.2-alpine"` | no |
 | <a name="input_redis_master_count"></a> [redis\_master\_count](#input\_redis\_master\_count) | Number of Redis master nodes in the cluster | `number` | `3` | no |
