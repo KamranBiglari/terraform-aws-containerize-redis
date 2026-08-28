@@ -649,7 +649,15 @@ resource "null_resource" "build_lambda_layer" {
     # was just downloaded (a new machine, a CI runner, a cleaned .terraform) has no
     # lambda/layer to archive. Rebuild whenever it is missing instead of trusting
     # that a previous apply on some other machine produced it.
-    layer_present = length(fileset("${path.module}/lambda", "layer/python/redis/__init__.py")) > 0 ? "present" : "missing"
+    #
+    # The timestamp matters: triggers record the value seen at plan time, which is
+    # always "missing" on a run that builds the layer. A constant would therefore
+    # match on the next machine that is also missing it, leaving this resource
+    # unchanged - and an unchanged dependency lets Terraform read the archive at
+    # plan time, before the build has run. A value that differs on every plan keeps
+    # the rebuild (and the archive's deferral to apply) guaranteed while the layer
+    # is absent, and goes quiet once it is present.
+    layer_present = length(fileset("${path.module}/lambda", "layer/python/redis/__init__.py")) > 0 ? "present" : timestamp()
   }
 
   provisioner "local-exec" {
