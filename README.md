@@ -600,6 +600,7 @@ For issues and questions:
 | <a name="output_redis_cluster_port"></a> [redis\_cluster\_port](#output\_redis\_cluster\_port) | Redis cluster bus port |
 | <a name="output_redis_endpoints"></a> [redis\_endpoints](#output\_redis\_endpoints) | Redis cluster endpoints (use CloudMap DNS for discovery) |
 | <a name="output_redis_password_secret_arn"></a> [redis\_password\_secret\_arn](#output\_redis\_password\_secret\_arn) | ARN of the Secrets Manager secret holding the Redis password, or null when the cluster is unauthenticated |
+| <a name="output_redis_password_secret_id"></a> [redis\_password\_secret\_id](#output\_redis\_password\_secret\_id) | ID of the Secrets Manager secret holding the Redis password, for passing to `secret_id` arguments, or null when the cluster is unauthenticated. Secrets Manager identifies secrets by ARN, so this matches redis\_password\_secret\_arn. |
 | <a name="output_redis_port"></a> [redis\_port](#output\_redis\_port) | Redis port |
 | <a name="output_replica_count"></a> [replica\_count](#output\_replica\_count) | Number of replica nodes |
 | <a name="output_security_group_id"></a> [security\_group\_id](#output\_security\_group\_id) | Security group ID for Redis cluster |

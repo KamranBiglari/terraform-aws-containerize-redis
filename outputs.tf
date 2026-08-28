@@ -120,3 +120,8 @@ output "redis_password_secret_arn" {
   description = "ARN of the Secrets Manager secret holding the Redis password, or null when the cluster is unauthenticated"
   value       = local.redis_auth_enabled ? local.redis_password_secret_arn : null
 }
+
+output "redis_password_secret_id" {
+  description = "ID of the Secrets Manager secret holding the Redis password, for passing to `secret_id` arguments, or null when the cluster is unauthenticated. Secrets Manager identifies secrets by ARN, so this matches redis_password_secret_arn."
+  value       = local.redis_auth_enabled ? (var.create_redis_password_secret ? aws_secretsmanager_secret.redis_password[0].id : var.existing_redis_password_secret_arn) : null
+}
