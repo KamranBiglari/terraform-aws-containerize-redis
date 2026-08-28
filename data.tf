@@ -20,7 +20,7 @@ data "aws_service_discovery_dns_namespace" "existing" {
   count = var.create_service_discovery_namespace ? 0 : 1
 
   name = var.existing_service_discovery_namespace_name
-  type = "DNS_PRIVATE"
+  type = var.existing_service_discovery_namespace_type
 
   lifecycle {
     precondition {

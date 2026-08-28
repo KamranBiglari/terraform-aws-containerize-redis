@@ -109,6 +109,17 @@ variable "service_discovery_namespace" {
   default     = "redis.local"
 }
 
+variable "existing_service_discovery_namespace_type" {
+  description = "Type of the existing CloudMap namespace to look up: `DNS_PRIVATE` or `DNS_PUBLIC`. Only used when `create_service_discovery_namespace` is false."
+  type        = string
+  default     = "DNS_PRIVATE"
+
+  validation {
+    condition     = contains(["DNS_PRIVATE", "DNS_PUBLIC"], var.existing_service_discovery_namespace_type)
+    error_message = "Namespace type must be either DNS_PRIVATE or DNS_PUBLIC."
+  }
+}
+
 variable "existing_service_discovery_namespace_name" {
   description = "Name of an existing CloudMap private DNS namespace to register the Redis service in. Required when `create_service_discovery_namespace` is false, ignored otherwise. The namespace must already exist when this module is planned."
   type        = string
