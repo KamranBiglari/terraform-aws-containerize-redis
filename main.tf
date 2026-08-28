@@ -20,6 +20,54 @@ resource "aws_cloudwatch_log_group" "redis" {
   tags = var.tags
 }
 
+# Redis password
+#
+# Generated unless one is supplied. The generated value avoids quotes and
+# backslashes: the password reaches redis-server through a shell command line.
+resource "random_password" "redis" {
+  count = var.create_redis_password_secret && var.redis_password == null ? 1 : 0
+
+  length           = 32
+  special          = true
+  override_special = "!#%&*+-.:=?@_~"
+}
+
+resource "aws_secretsmanager_secret" "redis_password" {
+  count = var.create_redis_password_secret ? 1 : 0
+
+  name        = coalesce(var.redis_password_secret_name, "${var.cluster_name}-redis-password")
+  description = "Redis AUTH password for ${var.cluster_name}"
+
+  tags = var.tags
+
+  lifecycle {
+    create_before_destroy = true
+
+    precondition {
+      condition     = var.existing_redis_password_secret_arn == null
+      error_message = "Set either create_redis_password_secret or existing_redis_password_secret_arn, not both."
+    }
+  }
+}
+
+resource "aws_secretsmanager_secret_version" "redis_password" {
+  count = var.create_redis_password_secret ? 1 : 0
+
+  secret_id = aws_secretsmanager_secret.redis_password[0].id
+
+  # A connection document, so consumers get everything they need from one secret
+  secret_string = jsonencode({
+    host     = local.redis_endpoint
+    port     = local.redis_port
+    password = coalesce(var.redis_password, try(random_password.redis[0].result, null))
+    type     = "redis-cluster"
+  })
+
+  lifecycle {
+    create_before_destroy = true
+  }
+}
+
 # Security Group for Redis Cluster
 #
 # Rules are standalone resources rather than inline blocks: inline rules are
@@ -129,6 +177,29 @@ resource "aws_iam_role" "ecs_task_execution_role" {
 resource "aws_iam_role_policy_attachment" "ecs_task_execution_role_policy" {
   role       = aws_iam_role.ecs_task_execution_role.name
   policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy"
+}
+
+# Lets ECS inject the Redis password into the container at task start
+resource "aws_iam_role_policy" "ecs_task_execution_secrets" {
+  count = local.redis_auth_enabled ? 1 : 0
+
+  name_prefix = "redis-secret-"
+  role        = aws_iam_role.ecs_task_execution_role.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect   = "Allow"
+        Action   = ["secretsmanager:GetSecretValue"]
+        Resource = local.redis_password_secret_arn
+      }
+    ]
+  })
+
+  lifecycle {
+    create_before_destroy = true
+  }
 }
 
 # IAM Role for ECS Task
@@ -248,19 +319,17 @@ resource "aws_ecs_task_definition" "redis_node" {
         }
       ]
 
-      command = [
-        "redis-server",
-        "--cluster-enabled", "yes",
-        "--cluster-config-file", "nodes.conf",
-        "--cluster-node-timeout", "5000",
-        "--appendonly", "yes",
-        "--protected-mode", "no",
-        "--bind", "0.0.0.0",
-        "--port", tostring(local.redis_port),
-        "--cluster-port", tostring(local.redis_cluster_port),
-        "--cluster-announce-port", tostring(local.redis_port),
-        "--cluster-announce-bus-port", tostring(local.redis_cluster_port)
-      ]
+      # Without auth the server is exec'd directly. With auth the password only
+      # exists as an environment variable injected from Secrets Manager, and ECS
+      # does not expand variables in command arguments, so it goes through a shell.
+      entryPoint = local.redis_auth_enabled ? ["/bin/sh", "-c"] : null
+
+      command = local.redis_auth_enabled ? [join(" ", concat(
+        ["exec redis-server"],
+        local.redis_server_args,
+        # masterauth lets replicas authenticate to their master
+        ["--requirepass \"$REDIS_PASSWORD\"", "--masterauth \"$REDIS_PASSWORD\""],
+      ))] : concat(["redis-server"], local.redis_server_args)
 
       logConfiguration = {
         logDriver = "awslogs"
@@ -272,12 +341,19 @@ resource "aws_ecs_task_definition" "redis_node" {
       }
 
       healthCheck = {
-        command     = ["CMD-SHELL", "redis-cli -p ${local.redis_port} ping | grep PONG"]
+        command     = ["CMD-SHELL", local.redis_health_check_command]
         interval    = 30
         timeout     = 5
         retries     = 3
         startPeriod = 60
       }
+
+      secrets = local.redis_auth_enabled ? [
+        {
+          name      = "REDIS_PASSWORD"
+          valueFrom = local.redis_password_value_from
+        }
+      ] : []
 
       environment = concat([
         {
@@ -406,19 +482,21 @@ resource "aws_lambda_function" "redis_cluster_init" {
 
   environment {
     variables = {
-      ECS_CLUSTER_ARN     = local.ecs_cluster_arn
-      ECS_SERVICE_NAME    = aws_ecs_service.redis_cluster.name
-      REDIS_MASTER_COUNT  = var.redis_master_count
-      REDIS_REPLICA_COUNT = var.redis_replica_count
-      CLOUDMAP_NAMESPACE  = local.service_discovery_namespace_name
-      CLOUDMAP_SERVICE    = aws_service_discovery_service.redis.name
-      VPC_ID              = var.vpc_id
-      SUBNET_IDS          = join(",", var.subnet_ids)
-      SECURITY_GROUP_ID   = aws_security_group.redis_cluster.id
-      ALLOWED_CIDR_BLOCKS = join(",", var.allowed_cidr_blocks)
-      CLIENT_RULE_DESC    = local.redis_client_rule_description
-      REDIS_PORT          = tostring(local.redis_port)
-      REDIS_CLUSTER_PORT  = tostring(local.redis_cluster_port)
+      ECS_CLUSTER_ARN           = local.ecs_cluster_arn
+      ECS_SERVICE_NAME          = aws_ecs_service.redis_cluster.name
+      REDIS_MASTER_COUNT        = var.redis_master_count
+      REDIS_REPLICA_COUNT       = var.redis_replica_count
+      CLOUDMAP_NAMESPACE        = local.service_discovery_namespace_name
+      CLOUDMAP_SERVICE          = aws_service_discovery_service.redis.name
+      VPC_ID                    = var.vpc_id
+      SUBNET_IDS                = join(",", var.subnet_ids)
+      SECURITY_GROUP_ID         = aws_security_group.redis_cluster.id
+      ALLOWED_CIDR_BLOCKS       = join(",", var.allowed_cidr_blocks)
+      CLIENT_RULE_DESC          = local.redis_client_rule_description
+      REDIS_PASSWORD_SECRET_ARN = local.redis_auth_enabled ? local.redis_password_secret_arn : ""
+      REDIS_PASSWORD_SECRET_KEY = var.create_redis_password_secret ? local.redis_password_secret_json_key : (var.existing_redis_password_secret_key == null ? "" : var.existing_redis_password_secret_key)
+      REDIS_PORT                = tostring(local.redis_port)
+      REDIS_CLUSTER_PORT        = tostring(local.redis_cluster_port)
     }
   }
 
@@ -525,6 +603,11 @@ resource "aws_iam_role_policy" "lambda_ecs_policy" {
           "ec2:RevokeSecurityGroupIngress"
         ]
         Resource = aws_security_group.redis_cluster.arn
+      },
+      {
+        Effect   = "Allow"
+        Action   = ["secretsmanager:GetSecretValue"]
+        Resource = local.redis_auth_enabled ? local.redis_password_secret_arn : "arn:aws:secretsmanager:*:*:secret:__none__"
       },
       {
         Effect = "Allow"

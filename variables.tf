@@ -255,3 +255,34 @@ variable "service_discovery_deregistration_delay" {
   type        = string
   default     = "120s"
 }
+
+variable "create_redis_password_secret" {
+  description = "Whether to create a Secrets Manager secret holding the Redis password. Setting this, or `existing_redis_password_secret_arn`, turns on Redis AUTH; with neither the cluster runs unauthenticated."
+  type        = bool
+  default     = false
+}
+
+variable "redis_password" {
+  description = "Password to store in the created secret. Only used when `create_redis_password_secret` is true; when left null a strong password is generated."
+  type        = string
+  default     = null
+  sensitive   = true
+}
+
+variable "redis_password_secret_name" {
+  description = "Name of the Secrets Manager secret to create. Only used when `create_redis_password_secret` is true. Defaults to `\"<cluster_name>-redis-password\"`."
+  type        = string
+  default     = null
+}
+
+variable "existing_redis_password_secret_arn" {
+  description = "ARN of an existing Secrets Manager secret holding the Redis password. Use instead of `create_redis_password_secret` to bring your own secret."
+  type        = string
+  default     = null
+}
+
+variable "existing_redis_password_secret_key" {
+  description = "Key to read from an existing JSON-encoded secret, for example `password`. Leave null when the secret's value is the password itself. Only used with `existing_redis_password_secret_arn`."
+  type        = string
+  default     = null
+}

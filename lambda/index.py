@@ -8,6 +8,11 @@ from typing import List, Dict, Tuple
 ecs_client = boto3.client('ecs')
 ssm_client = boto3.client('ssm')
 ec2_client = boto3.client('ec2')
+secretsmanager_client = boto3.client('secretsmanager')
+
+# Resolved once per container, not per connection
+_redis_password = None
+_redis_password_loaded = False
 
 def handler(event, context):
     """
@@ -98,6 +103,46 @@ def handler(event, context):
         # Client access stays revoked: an unclustered or half-clustered fleet must
         # not be reachable, and the next steady-state event retries from scratch.
         raise
+
+
+def get_redis_password():
+    """
+    Read the Redis password from Secrets Manager, or return None when the cluster
+    runs unauthenticated. The value is cached for the life of the container.
+    """
+    global _redis_password, _redis_password_loaded
+
+    if _redis_password_loaded:
+        return _redis_password
+
+    secret_arn = os.environ.get('REDIS_PASSWORD_SECRET_ARN', '')
+    secret_key = os.environ.get('REDIS_PASSWORD_SECRET_KEY', '')
+
+    if not secret_arn:
+        _redis_password, _redis_password_loaded = None, True
+        return None
+
+    print(f"Reading Redis password from {secret_arn}")
+    secret_string = secretsmanager_client.get_secret_value(SecretId=secret_arn)['SecretString']
+
+    if secret_key:
+        _redis_password = json.loads(secret_string)[secret_key]
+    else:
+        _redis_password = secret_string
+
+    _redis_password_loaded = True
+    return _redis_password
+
+
+def redis_connect(host: str, port: int, **kwargs):
+    """Connect to a Redis node, authenticating when the cluster has a password."""
+    import redis
+
+    password = get_redis_password()
+    if password:
+        kwargs['password'] = password
+
+    return redis.Redis(host=host, port=port, decode_responses=True, **kwargs)
 
 
 def revoke_client_access(security_group_id: str, description: str):
@@ -228,7 +273,7 @@ def is_cluster_initialized(node_ip: str, redis_port: int = 6379) -> bool:
         print(f"Checking cluster status on {node_ip}:{redis_port}...")
 
         # Connect to the node
-        node_conn = redis.Redis(host=node_ip, port=redis_port, decode_responses=True, socket_connect_timeout=5)
+        node_conn = redis_connect(node_ip, redis_port, socket_connect_timeout=5)
 
         # Try to get cluster info
         cluster_info = node_conn.execute_command('CLUSTER', 'INFO')
@@ -283,7 +328,7 @@ def assert_nodes_empty(node_ips: List[str], redis_port: int):
     problems = []
 
     for ip in node_ips:
-        node_conn = redis.Redis(host=ip, port=redis_port, decode_responses=True, socket_connect_timeout=5)
+        node_conn = redis_connect(ip, redis_port, socket_connect_timeout=5)
 
         db_size = int(node_conn.execute_command('DBSIZE'))
         info = parse_cluster_info(node_conn.execute_command('CLUSTER', 'INFO'))
@@ -333,7 +378,7 @@ def create_cluster_direct(node_ips: List[str], replicas_per_master: int, redis_p
         print("Resetting all nodes to clean state...")
         for ip in node_ips:
             try:
-                node_conn = redis.Redis(host=ip, port=redis_port, decode_responses=True, socket_connect_timeout=5)
+                node_conn = redis_connect(ip, redis_port, socket_connect_timeout=5)
                 # Check if node has any cluster configuration
                 cluster_info = node_conn.execute_command('CLUSTER', 'INFO')
                 cluster_info_str = cluster_info.decode('utf-8') if isinstance(cluster_info, bytes) else str(cluster_info)
@@ -352,7 +397,7 @@ def create_cluster_direct(node_ips: List[str], replicas_per_master: int, redis_p
         print("All nodes reset. Verifying nodes are in a clean state...")
 
         for ip in node_ips:
-            node_conn = redis.Redis(host=ip, port=redis_port, decode_responses=True, socket_connect_timeout=5)
+            node_conn = redis_connect(ip, redis_port, socket_connect_timeout=5)
             info = parse_cluster_info(node_conn.execute_command('CLUSTER', 'INFO'))
             known_nodes = int(info.get('cluster_known_nodes', '1'))
             slots_assigned = int(info.get('cluster_slots_assigned', '0'))
@@ -373,7 +418,7 @@ def create_cluster_direct(node_ips: List[str], replicas_per_master: int, redis_p
         # First, let's try to create the cluster using CLUSTER MEET commands
 
         # Connect to first node as coordinator
-        coordinator = redis.Redis(host=node_ips[0], port=redis_port, decode_responses=True)
+        coordinator = redis_connect(node_ips[0], redis_port)
 
         # Make all nodes meet each other
         print("Making nodes meet each other...")
@@ -395,7 +440,7 @@ def create_cluster_direct(node_ips: List[str], replicas_per_master: int, redis_p
             start_slot = i * slots_per_master
             end_slot = (i + 1) * slots_per_master - 1 if i < master_count - 1 else 16383
 
-            node_conn = redis.Redis(host=node_ips[i], port=redis_port, decode_responses=True)
+            node_conn = redis_connect(node_ips[i], redis_port)
             node_id = node_conn.execute_command('CLUSTER', 'MYID')
 
             print(f"Assigning slots {start_slot}-{end_slot} to node {node_ips[i]}:{redis_port} (ID: {node_id})")
@@ -412,8 +457,8 @@ def create_cluster_direct(node_ips: List[str], replicas_per_master: int, redis_p
             print("Setting up replication...")
             master_idx = 0
             for i in range(master_count, len(node_ips)):
-                replica_conn = redis.Redis(host=node_ips[i], port=redis_port, decode_responses=True)
-                master_conn = redis.Redis(host=node_ips[master_idx], port=redis_port, decode_responses=True)
+                replica_conn = redis_connect(node_ips[i], redis_port)
+                master_conn = redis_connect(node_ips[master_idx], redis_port)
                 master_id = master_conn.execute_command('CLUSTER', 'MYID')
 
                 print(f"Making {node_ips[i]}:{redis_port} a replica of {node_ips[master_idx]}:{redis_port} (ID: {master_id})")

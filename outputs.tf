@@ -50,7 +50,7 @@ output "cloudmap_service_name" {
 
 output "redis_endpoints" {
   description = "Redis cluster endpoints (use CloudMap DNS for discovery)"
-  value       = "${aws_service_discovery_service.redis.name}.${local.service_discovery_namespace_name}"
+  value       = local.redis_endpoint
 }
 
 output "redis_port" {
@@ -102,8 +102,8 @@ output "elasticache_compatible" {
     elasticache_replication_group_arn = null
     elasticache_replication_group_id  = var.service_discovery_name
 
-    elasticache_replication_group_primary_endpoint_address = "${aws_service_discovery_service.redis.name}.${local.service_discovery_namespace_name}"
-    elasticache_replication_group_reader_endpoint_address  = "${aws_service_discovery_service.redis.name}.${local.service_discovery_namespace_name}"
+    elasticache_replication_group_primary_endpoint_address = local.redis_endpoint
+    elasticache_replication_group_reader_endpoint_address  = local.redis_endpoint
 
     security_group_arn         = aws_security_group.redis_cluster.arn
     security_group_description = aws_security_group.redis_cluster.description
@@ -114,4 +114,9 @@ output "elasticache_compatible" {
     security_group_owner_id    = aws_security_group.redis_cluster.owner_id
     security_group_vpc_id      = aws_security_group.redis_cluster.vpc_id
   }
+}
+
+output "redis_password_secret_arn" {
+  description = "ARN of the Secrets Manager secret holding the Redis password, or null when the cluster is unauthenticated"
+  value       = local.redis_auth_enabled ? local.redis_password_secret_arn : null
 }

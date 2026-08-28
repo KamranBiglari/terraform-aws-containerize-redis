@@ -227,6 +227,52 @@ The module creates a security group with:
 - **Port 6379** (`redis_port`) - Redis client connections (from `allowed_cidr_blocks`)
 - **Port 16379** (`redis_cluster_port`, default `redis_port` + 10000) - Redis cluster bus (inter-node communication only)
 
+#### Authentication
+
+Redis runs without a password by default. Turning on AUTH means having a secret,
+and the module can either create one or use one you already have.
+
+Let the module create it - the password is generated unless you pass one:
+
+```hcl
+create_redis_password_secret = true
+redis_password               = var.redis_password   # optional
+```
+
+Or point it at a secret you manage:
+
+```hcl
+existing_redis_password_secret_arn = aws_secretsmanager_secret.redis.arn
+existing_redis_password_secret_key = "password"     # omit if the secret is the raw password
+```
+
+Either way the secret's ARN comes back as the `redis_password_secret_arn` output.
+
+A secret created by the module holds a connection document rather than a bare
+password, so an application can get everything it needs from one place:
+
+```json
+{
+  "host": "redis-cluster.redis.local",
+  "password": "...",
+  "port": 6379,
+  "type": "redis-cluster"
+}
+```
+
+The container reads the `password` key out of it (`<arn>:password::`). An existing
+secret is used as-is: give `existing_redis_password_secret_key` when yours is JSON,
+or leave it null when the secret's value is the password itself.
+
+The password is never rendered into Terraform state or the task definition: ECS
+injects it as the `REDIS_PASSWORD` container secret, and the nodes start with
+`--requirepass` and `--masterauth` (replicas need the latter to authenticate to
+their master). The health check and the initialization Lambda authenticate with
+the same secret - the Lambda reads it at runtime, so its role is granted
+`secretsmanager:GetSecretValue` on that secret only.
+
+Clients then need the password: `redis-cli -c -h <endpoint> -a <password>`.
+
 #### Client access is gated on cluster initialization
 
 Redis will not form a cluster out of nodes that already contain keys, so a client
@@ -433,6 +479,7 @@ For issues and questions:
 | <a name="requirement_archive"></a> [archive](#requirement\_archive) | >= 2.0 |
 | <a name="requirement_aws"></a> [aws](#requirement\_aws) | >= 5.0 |
 | <a name="requirement_time"></a> [time](#requirement\_time) | >= 0.9 |
+| <a name="requirement_random"></a> [random](#requirement\_random) | >= 3.0 |
 
 ## Providers
 
@@ -460,13 +507,17 @@ For issues and questions:
 | [aws_iam_role.ecs_task_role](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/iam_role) | resource |
 | [aws_iam_role.lambda_exec](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/iam_role) | resource |
 | [aws_iam_role_policy.ecs_task_cloudmap_policy](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/iam_role_policy) | resource |
+| [aws_iam_role_policy.ecs_task_execution_secrets](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/iam_role_policy) | resource |
 | [aws_iam_role_policy.lambda_ecs_policy](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/iam_role_policy) | resource |
 | [aws_iam_role_policy_attachment.ecs_task_execution_role_policy](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/iam_role_policy_attachment) | resource |
 | [aws_iam_role_policy_attachment.lambda_vpc_execution](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/iam_role_policy_attachment) | resource |
 | [aws_lambda_function.redis_cluster_init](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/lambda_function) | resource |
 | [aws_lambda_layer_version.redis_layer](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/lambda_layer_version) | resource |
 | [aws_lambda_permission.allow_cloudwatch](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/lambda_permission) | resource |
+| [aws_secretsmanager_secret.redis_password](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/secretsmanager_secret) | resource |
+| [aws_secretsmanager_secret_version.redis_password](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/secretsmanager_secret_version) | resource |
 | [aws_security_group.redis_cluster](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/security_group) | resource |
+| [random_password.redis](https://registry.terraform.io/providers/hashicorp/random/latest/docs/resources/password) | resource |
 | [aws_vpc_security_group_egress_rule.redis_all](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/vpc_security_group_egress_rule) | resource |
 | [aws_vpc_security_group_ingress_rule.redis_bus](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/vpc_security_group_ingress_rule) | resource |
 | [aws_vpc_security_group_ingress_rule.redis_client](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/vpc_security_group_ingress_rule) | resource |
@@ -496,6 +547,7 @@ For issues and questions:
 | <a name="input_cluster_init_timeout"></a> [cluster\_init\_timeout](#input\_cluster\_init\_timeout) | Timeout in seconds for the cluster initialization Lambda. It has to cover waiting for the ECS service to stabilize plus forming the cluster. | `number` | `900` | no |
 | <a name="input_cloudwatch_log_group_name"></a> [cloudwatch\_log\_group\_name](#input\_cloudwatch\_log\_group\_name) | Name of the CloudWatch log group to create. Only used when `create_cloudwatch_log_group` is true. Defaults to `"/ecs/<cluster_name>-redis"`. | `string` | `null` | no |
 | <a name="input_create_cloudwatch_log_group"></a> [create\_cloudwatch\_log\_group](#input\_create\_cloudwatch\_log\_group) | Whether to create a CloudWatch log group for the Redis tasks. Set to false to log into an existing group provided via `existing_cloudwatch_log_group_name`. | `bool` | `true` | no |
+| <a name="input_create_redis_password_secret"></a> [create\_redis\_password\_secret](#input\_create\_redis\_password\_secret) | Whether to create a Secrets Manager secret holding the Redis password. Setting this, or `existing_redis_password_secret_arn`, turns on Redis AUTH; with neither the cluster runs unauthenticated. | `bool` | `false` | no |
 | <a name="input_create_service_discovery_namespace"></a> [create\_service\_discovery\_namespace](#input\_create\_service\_discovery\_namespace) | Whether to create a CloudMap private DNS namespace. Set to false to register the Redis service in an existing namespace provided via `existing_service_discovery_namespace_name`. | `bool` | `true` | no |
 | <a name="input_create_ecs_cluster"></a> [create\_ecs\_cluster](#input\_create\_ecs\_cluster) | Whether to create a new ECS cluster for the Redis service. Set to false to deploy into an existing cluster provided via `existing_ecs_cluster_name`. | `bool` | `true` | no |
 | <a name="input_ecs_cluster_name"></a> [ecs\_cluster\_name](#input\_ecs\_cluster\_name) | Name of the ECS cluster to create. Only used when `create_ecs_cluster` is true. Defaults to `"<cluster_name>-redis"`. | `string` | `null` | no |
@@ -504,6 +556,8 @@ For issues and questions:
 | <a name="input_enable_container_insights"></a> [enable\_container\_insights](#input\_enable\_container\_insights) | Enable CloudWatch Container Insights for the ECS cluster | `bool` | `true` | no |
 | <a name="input_enable_ecs_exec"></a> [enable\_ecs\_exec](#input\_enable\_ecs\_exec) | Enable ECS Exec for debugging tasks | `bool` | `false` | no |
 | <a name="input_existing_cloudwatch_log_group_name"></a> [existing\_cloudwatch\_log\_group\_name](#input\_existing\_cloudwatch\_log\_group\_name) | Name of an existing CloudWatch log group to send Redis task logs to. Required when `create_cloudwatch_log_group` is false, ignored otherwise. | `string` | `null` | no |
+| <a name="input_existing_redis_password_secret_arn"></a> [existing\_redis\_password\_secret\_arn](#input\_existing\_redis\_password\_secret\_arn) | ARN of an existing Secrets Manager secret holding the Redis password. Use instead of `create_redis_password_secret` to bring your own secret. | `string` | `null` | no |
+| <a name="input_existing_redis_password_secret_key"></a> [existing\_redis\_password\_secret\_key](#input\_existing\_redis\_password\_secret\_key) | Key to read from an existing JSON-encoded secret, for example `password`. Leave null when the secret's value is the password itself. Only used with `existing_redis_password_secret_arn`. | `string` | `null` | no |
 | <a name="input_existing_service_discovery_namespace_type"></a> [existing\_service\_discovery\_namespace\_type](#input\_existing\_service\_discovery\_namespace\_type) | Type of the existing CloudMap namespace to look up: `DNS_PRIVATE` or `DNS_PUBLIC`. Only used when `create_service_discovery_namespace` is false. | `string` | `"DNS_PRIVATE"` | no |
 | <a name="input_existing_service_discovery_namespace_name"></a> [existing\_service\_discovery\_namespace\_name](#input\_existing\_service\_discovery\_namespace\_name) | Name of an existing CloudMap private DNS namespace to register the Redis service in. Required when `create_service_discovery_namespace` is false, ignored otherwise. The namespace must already exist when this module is planned. | `string` | `null` | no |
 | <a name="input_existing_ecs_cluster_name"></a> [existing\_ecs\_cluster\_name](#input\_existing\_ecs\_cluster\_name) | Name of an existing ECS cluster to deploy the Redis service into. Required when `create_ecs_cluster` is false, ignored otherwise. The cluster must already exist when this module is planned. | `string` | `null` | no |
@@ -513,6 +567,8 @@ For issues and questions:
 | <a name="input_redis_environment_variables"></a> [redis\_environment\_variables](#input\_redis\_environment\_variables) | Additional environment variables for Redis containers | <pre>list(object({<br/>    name  = string<br/>    value = string<br/>  }))</pre> | `[]` | no |
 | <a name="input_redis_image"></a> [redis\_image](#input\_redis\_image) | Docker image for Redis (must support cluster mode) | `string` | `"redis:7.2-alpine"` | no |
 | <a name="input_redis_master_count"></a> [redis\_master\_count](#input\_redis\_master\_count) | Number of Redis master nodes in the cluster | `number` | `3` | no |
+| <a name="input_redis_password"></a> [redis\_password](#input\_redis\_password) | Password to store in the created secret. Only used when `create_redis_password_secret` is true; when left null a strong password is generated. | `string` | `null` | no |
+| <a name="input_redis_password_secret_name"></a> [redis\_password\_secret\_name](#input\_redis\_password\_secret\_name) | Name of the Secrets Manager secret to create. Only used when `create_redis_password_secret` is true. Defaults to `"<cluster_name>-redis-password"`. | `string` | `null` | no |
 | <a name="input_redis_port"></a> [redis\_port](#input\_redis\_port) | Port for Redis | `number` | `6379` | no |
 | <a name="input_redis_replica_count"></a> [redis\_replica\_count](#input\_redis\_replica\_count) | Number of Redis replica nodes (total replicas, not per master) | `number` | `3` | no |
 | <a name="input_service_discovery_deregistration_delay"></a> [service\_discovery\_deregistration\_delay](#input\_service\_discovery\_deregistration\_delay) | How long to wait, on destroy, between deleting the ECS service and deleting the CloudMap service, so that task instances finish deregistering. Raise it if destroys fail with `ResourceInUse: Service contains registered instances`. | `string` | `"120s"` | no |
@@ -543,6 +599,7 @@ For issues and questions:
 | <a name="output_master_count"></a> [master\_count](#output\_master\_count) | Number of master nodes |
 | <a name="output_redis_cluster_port"></a> [redis\_cluster\_port](#output\_redis\_cluster\_port) | Redis cluster bus port |
 | <a name="output_redis_endpoints"></a> [redis\_endpoints](#output\_redis\_endpoints) | Redis cluster endpoints (use CloudMap DNS for discovery) |
+| <a name="output_redis_password_secret_arn"></a> [redis\_password\_secret\_arn](#output\_redis\_password\_secret\_arn) | ARN of the Secrets Manager secret holding the Redis password, or null when the cluster is unauthenticated |
 | <a name="output_redis_port"></a> [redis\_port](#output\_redis\_port) | Redis port |
 | <a name="output_replica_count"></a> [replica\_count](#output\_replica\_count) | Number of replica nodes |
 | <a name="output_security_group_id"></a> [security\_group\_id](#output\_security\_group\_id) | Security group ID for Redis cluster |
