@@ -249,3 +249,9 @@ variable "lambda_layer_build_interpreter" {
   type        = list(string)
   default     = ["bash", "-c"]
 }
+
+variable "service_discovery_deregistration_delay" {
+  description = "How long to wait, on destroy, between deleting the ECS service and deleting the CloudMap service, so that task instances finish deregistering. Raise it if destroys fail with `ResourceInUse: Service contains registered instances`."
+  type        = string
+  default     = "120s"
+}

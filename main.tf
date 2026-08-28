@@ -117,6 +117,13 @@ resource "aws_iam_role" "ecs_task_execution_role" {
   })
 
   tags = var.tags
+
+  # Replaced together with the rest of this chain whenever cluster_name changes.
+  # Every resource in the chain has to agree on the ordering, otherwise Terraform
+  # cannot sequence the swap and reports a dependency cycle.
+  lifecycle {
+    create_before_destroy = true
+  }
 }
 
 resource "aws_iam_role_policy_attachment" "ecs_task_execution_role_policy" {
@@ -142,6 +149,13 @@ resource "aws_iam_role" "ecs_task_role" {
   })
 
   tags = var.tags
+
+  # Replaced together with the rest of this chain whenever cluster_name changes.
+  # Every resource in the chain has to agree on the ordering, otherwise Terraform
+  # cannot sequence the swap and reports a dependency cycle.
+  lifecycle {
+    create_before_destroy = true
+  }
 }
 
 # Allow ECS tasks to discover services in CloudMap
@@ -293,6 +307,17 @@ resource "aws_ecs_task_definition" "redis_node" {
   }
 }
 
+# Deleting the ECS service returns before CloudMap has finished deregistering the
+# task instances, and CloudMap refuses to delete a service that still has any
+# ("ResourceInUse: Service contains registered instances"). This sits between the
+# two in the dependency chain, so destroying waits after the ECS service is gone
+# and before the service discovery service is deleted.
+resource "time_sleep" "service_discovery_deregistration" {
+  depends_on = [aws_service_discovery_service.redis]
+
+  destroy_duration = var.service_discovery_deregistration_delay
+}
+
 # ECS Service for Redis Cluster
 resource "aws_ecs_service" "redis_cluster" {
   name            = "${var.cluster_name}-redis-service"
@@ -337,7 +362,8 @@ resource "aws_ecs_service" "redis_cluster" {
   })
 
   depends_on = [
-    aws_iam_role_policy_attachment.ecs_task_execution_role_policy
+    aws_iam_role_policy_attachment.ecs_task_execution_role_policy,
+    time_sleep.service_discovery_deregistration,
   ]
 }
 
@@ -351,6 +377,13 @@ resource "aws_lambda_layer_version" "redis_layer" {
   source_code_hash    = data.archive_file.lambda_layer[0].output_base64sha256
 
   description = "Redis Python library for cluster initialization"
+
+  # Replaced together with the rest of this chain whenever cluster_name changes.
+  # Every resource in the chain has to agree on the ordering, otherwise Terraform
+  # cannot sequence the swap and reports a dependency cycle.
+  lifecycle {
+    create_before_destroy = true
+  }
 }
 
 # Lambda function to initialize Redis cluster
@@ -395,6 +428,13 @@ resource "aws_lambda_function" "redis_cluster_init" {
   }
 
   tags = var.tags
+
+  # Replaced together with the rest of this chain whenever cluster_name changes.
+  # Every resource in the chain has to agree on the ordering, otherwise Terraform
+  # cannot sequence the swap and reports a dependency cycle.
+  lifecycle {
+    create_before_destroy = true
+  }
 }
 
 # IAM Role for Lambda
@@ -417,6 +457,13 @@ resource "aws_iam_role" "lambda_exec" {
   })
 
   tags = var.tags
+
+  # Replaced together with the rest of this chain whenever cluster_name changes.
+  # Every resource in the chain has to agree on the ordering, otherwise Terraform
+  # cannot sequence the swap and reports a dependency cycle.
+  lifecycle {
+    create_before_destroy = true
+  }
 }
 
 resource "aws_iam_role_policy_attachment" "lambda_vpc_execution" {
@@ -424,6 +471,13 @@ resource "aws_iam_role_policy_attachment" "lambda_vpc_execution" {
 
   role       = aws_iam_role.lambda_exec[0].name
   policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole"
+
+  # Replaced together with the rest of this chain whenever cluster_name changes.
+  # Every resource in the chain has to agree on the ordering, otherwise Terraform
+  # cannot sequence the swap and reports a dependency cycle.
+  lifecycle {
+    create_before_destroy = true
+  }
 }
 
 resource "aws_iam_role_policy" "lambda_ecs_policy" {
@@ -491,6 +545,13 @@ resource "aws_iam_role_policy" "lambda_ecs_policy" {
       }
     ]
   })
+
+  # Replaced together with the rest of this chain whenever cluster_name changes.
+  # Every resource in the chain has to agree on the ordering, otherwise Terraform
+  # cannot sequence the swap and reports a dependency cycle.
+  lifecycle {
+    create_before_destroy = true
+  }
 }
 
 # Build the Lambda layer with dependencies
@@ -522,18 +583,31 @@ resource "aws_cloudwatch_event_rule" "ecs_service_stable" {
   count = var.enable_cluster_init ? 1 : 0
 
   name_prefix = "${var.cluster_name}-redis-stable-"
-  description = "Trigger when ECS service becomes stable"
+  description = "Trigger cluster initialization when the Redis service becomes stable"
 
+  # Matched on the service ARN in `resources`, not on the cluster: a cluster can
+  # host many services and every one of them emits these events.
+  #
+  # Two events are matched because either can be missed on its own. Deployment
+  # events carry no clusterArn, which is why the cluster is not part of the
+  # pattern - including it would stop them from ever matching.
   event_pattern = jsonencode({
     source      = ["aws.ecs"]
-    detail-type = ["ECS Service Action"]
+    detail-type = ["ECS Service Action", "ECS Deployment State Change"]
+    resources   = [aws_ecs_service.redis_cluster.id]
     detail = {
-      eventName  = ["SERVICE_STEADY_STATE"]
-      clusterArn = [local.ecs_cluster_arn]
+      eventName = ["SERVICE_STEADY_STATE", "SERVICE_DEPLOYMENT_COMPLETED"]
     }
   })
 
   tags = var.tags
+
+  # Replaced together with the rest of this chain whenever cluster_name changes.
+  # Every resource in the chain has to agree on the ordering, otherwise Terraform
+  # cannot sequence the swap and reports a dependency cycle.
+  lifecycle {
+    create_before_destroy = true
+  }
 }
 
 resource "aws_cloudwatch_event_target" "lambda" {
@@ -542,14 +616,28 @@ resource "aws_cloudwatch_event_target" "lambda" {
   rule      = aws_cloudwatch_event_rule.ecs_service_stable[0].name
   target_id = "RedisClusterInit"
   arn       = aws_lambda_function.redis_cluster_init[0].arn
+
+  # Replaced together with the rest of this chain whenever cluster_name changes.
+  # Every resource in the chain has to agree on the ordering, otherwise Terraform
+  # cannot sequence the swap and reports a dependency cycle.
+  lifecycle {
+    create_before_destroy = true
+  }
 }
 
 resource "aws_lambda_permission" "allow_cloudwatch" {
   count = var.enable_cluster_init ? 1 : 0
 
-  statement_id  = "AllowExecutionFromCloudWatch"
-  action        = "lambda:InvokeFunction"
-  function_name = aws_lambda_function.redis_cluster_init[0].function_name
-  principal     = "events.amazonaws.com"
-  source_arn    = aws_cloudwatch_event_rule.ecs_service_stable[0].arn
+  statement_id_prefix = "AllowExecutionFromCloudWatch"
+  action              = "lambda:InvokeFunction"
+  function_name       = aws_lambda_function.redis_cluster_init[0].function_name
+  principal           = "events.amazonaws.com"
+  source_arn          = aws_cloudwatch_event_rule.ecs_service_stable[0].arn
+
+  # Replaced together with the rest of this chain whenever cluster_name changes.
+  # Every resource in the chain has to agree on the ordering, otherwise Terraform
+  # cannot sequence the swap and reports a dependency cycle.
+  lifecycle {
+    create_before_destroy = true
+  }
 }

@@ -432,6 +432,7 @@ For issues and questions:
 | <a name="requirement_terraform"></a> [terraform](#requirement\_terraform) | >= 1.3 |
 | <a name="requirement_archive"></a> [archive](#requirement\_archive) | >= 2.0 |
 | <a name="requirement_aws"></a> [aws](#requirement\_aws) | >= 5.0 |
+| <a name="requirement_time"></a> [time](#requirement\_time) | >= 0.9 |
 
 ## Providers
 
@@ -473,6 +474,7 @@ For issues and questions:
 | [aws_service_discovery_private_dns_namespace.redis](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/service_discovery_private_dns_namespace) | resource |
 | [aws_service_discovery_service.redis](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/service_discovery_service) | resource |
 | [null_resource.build_lambda_layer](https://registry.terraform.io/providers/hashicorp/null/latest/docs/resources/resource) | resource |
+| [time_sleep.service_discovery_deregistration](https://registry.terraform.io/providers/hashicorp/time/latest/docs/resources/sleep) | resource |
 | [aws_ecs_cluster.existing](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/data-sources/ecs_cluster) | data source |
 | [aws_region.current](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/data-sources/region) | data source |
 | [aws_service_discovery_dns_namespace.existing](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/data-sources/service_discovery_dns_namespace) | data source |
@@ -513,6 +515,7 @@ For issues and questions:
 | <a name="input_redis_master_count"></a> [redis\_master\_count](#input\_redis\_master\_count) | Number of Redis master nodes in the cluster | `number` | `3` | no |
 | <a name="input_redis_port"></a> [redis\_port](#input\_redis\_port) | Port for Redis | `number` | `6379` | no |
 | <a name="input_redis_replica_count"></a> [redis\_replica\_count](#input\_redis\_replica\_count) | Number of Redis replica nodes (total replicas, not per master) | `number` | `3` | no |
+| <a name="input_service_discovery_deregistration_delay"></a> [service\_discovery\_deregistration\_delay](#input\_service\_discovery\_deregistration\_delay) | How long to wait, on destroy, between deleting the ECS service and deleting the CloudMap service, so that task instances finish deregistering. Raise it if destroys fail with `ResourceInUse: Service contains registered instances`. | `string` | `"120s"` | no |
 | <a name="input_service_discovery_name"></a> [service\_discovery\_name](#input\_service\_discovery\_name) | CloudMap service name for Redis | `string` | `"redis-cluster"` | no |
 | <a name="input_service_discovery_namespace"></a> [service\_discovery\_namespace](#input\_service\_discovery\_namespace) | Name of the CloudMap private DNS namespace to create. Only used when `create_service_discovery_namespace` is true. | `string` | `"redis.local"` | no |
 | <a name="input_tags"></a> [tags](#input\_tags) | Tags to apply to all resources | `map(string)` | `{}` | no |
