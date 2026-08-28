@@ -27,45 +27,63 @@ def handler(event, context):
     redis_port = int(os.environ.get('REDIS_PORT', '6379'))
     redis_cluster_port = int(os.environ.get('REDIS_CLUSTER_PORT', '16379'))
 
+    security_group_id = os.environ['SECURITY_GROUP_ID']
+    client_rule_desc = os.environ.get('CLIENT_RULE_DESC', 'redis client access')
+    allowed_cidr_blocks = [
+        cidr for cidr in os.environ.get('ALLOWED_CIDR_BLOCKS', '').split(',') if cidr
+    ]
+
     total_nodes = master_count + replica_count
     replicas_per_master = replica_count // master_count if master_count > 0 else 0
 
     print(f"Cluster configuration: {master_count} masters, {replica_count} replicas ({replicas_per_master} per master)")
 
     try:
+        # A cluster that is already healthy needs no work, and must not have its
+        # client access interrupted.
+        print("Discovering Redis nodes...")
+        try:
+            task_arns, node_ips = get_redis_nodes(cluster_arn, service_name)
+        except Exception as e:
+            print(f"Could not discover nodes yet: {e}")
+            task_arns, node_ips = [], []
+
+        if node_ips and is_cluster_initialized(node_ips[0], redis_port):
+            print("Redis cluster is already initialized")
+            authorize_client_access(security_group_id, allowed_cidr_blocks, redis_port, client_rule_desc)
+            return {
+                'statusCode': 200,
+                'body': json.dumps('Cluster already initialized')
+            }
+
+        # The nodes are unclustered - either a first deployment or a restart that
+        # replaced every task. Keep clients out until the cluster is formed: a
+        # single client write turns a node into one Redis refuses to cluster.
+        revoke_client_access(security_group_id, client_rule_desc)
+
         # Wait for all tasks to be running and healthy
         print("Checking ECS service status...")
         if not wait_for_service_stable(cluster_arn, service_name, total_nodes):
-            return {
-                'statusCode': 500,
-                'body': json.dumps('ECS service did not stabilize in time')
-            }
+            raise RuntimeError('ECS service did not stabilize in time')
 
         # Get all running tasks and their IPs
         print("Discovering Redis nodes...")
         task_arns, node_ips = get_redis_nodes(cluster_arn, service_name)
 
         if len(node_ips) < total_nodes:
-            print(f"WARNING: Expected {total_nodes} nodes but found {len(node_ips)}")
-            return {
-                'statusCode': 500,
-                'body': json.dumps(f'Not enough nodes running. Expected {total_nodes}, found {len(node_ips)}')
-            }
+            raise RuntimeError(
+                f'Not enough nodes running. Expected {total_nodes}, found {len(node_ips)}'
+            )
 
         print(f"Found {len(node_ips)} Redis nodes: {node_ips}")
         print(f"Task ARNs: {task_arns}")
 
-        # Check if cluster is already initialized
-        if is_cluster_initialized(node_ips[0], redis_port):
-            print("Redis cluster is already initialized")
-            return {
-                'statusCode': 200,
-                'body': json.dumps('Cluster already initialized')
-            }
-
         # Create cluster by connecting directly to Redis nodes
         print("Initializing Redis cluster...")
         create_cluster_direct(node_ips, replicas_per_master, redis_port)
+
+        # Cluster is healthy - let clients back in
+        authorize_client_access(security_group_id, allowed_cidr_blocks, redis_port, client_rule_desc)
 
         print("Redis cluster initialized successfully!")
         return {
@@ -77,10 +95,65 @@ def handler(event, context):
         print(f"Error initializing cluster: {str(e)}")
         import traceback
         traceback.print_exc()
-        return {
-            'statusCode': 500,
-            'body': json.dumps(f'Error: {str(e)}')
-        }
+        # Client access stays revoked: an unclustered or half-clustered fleet must
+        # not be reachable, and the next steady-state event retries from scratch.
+        raise
+
+
+def revoke_client_access(security_group_id: str, description: str):
+    """
+    Remove the client ingress rules this function owns.
+
+    Rules are matched on their description, so rules added by anything else on the
+    same security group - including the cluster's own node-to-node rules - are
+    left alone.
+    """
+    response = ec2_client.describe_security_group_rules(
+        Filters=[{'Name': 'group-id', 'Values': [security_group_id]}]
+    )
+
+    rule_ids = [
+        rule['SecurityGroupRuleId']
+        for rule in response.get('SecurityGroupRules', [])
+        if not rule.get('IsEgress') and rule.get('Description') == description
+    ]
+
+    if not rule_ids:
+        print("No client access rules to revoke")
+        return
+
+    print(f"Revoking {len(rule_ids)} client access rule(s) on {security_group_id}")
+    ec2_client.revoke_security_group_ingress(
+        GroupId=security_group_id,
+        SecurityGroupRuleIds=rule_ids,
+    )
+
+
+def authorize_client_access(security_group_id: str, cidr_blocks: List[str], redis_port: int, description: str):
+    """Open the Redis port to the allowed CIDR blocks now that the cluster is healthy."""
+    if not cidr_blocks:
+        print("No allowed CIDR blocks configured; leaving client access closed")
+        return
+
+    print(f"Authorizing client access from {cidr_blocks} on {security_group_id}")
+
+    try:
+        ec2_client.authorize_security_group_ingress(
+            GroupId=security_group_id,
+            IpPermissions=[{
+                'IpProtocol': 'tcp',
+                'FromPort': redis_port,
+                'ToPort': redis_port,
+                'IpRanges': [
+                    {'CidrIp': cidr, 'Description': description} for cidr in cidr_blocks
+                ],
+            }],
+        )
+    except ec2_client.exceptions.ClientError as e:
+        # Rules that are already there are fine - the end state is what matters.
+        if e.response['Error']['Code'] != 'InvalidPermission.Duplicate':
+            raise
+        print("Client access rules already present")
 
 
 def wait_for_service_stable(cluster_arn: str, service_name: str, expected_count: int, max_wait: int = 600) -> bool:
@@ -181,6 +254,66 @@ def is_cluster_initialized(node_ip: str, redis_port: int = 6379) -> bool:
         return False
 
 
+def parse_cluster_info(raw) -> Dict[str, str]:
+    """Parse the key:value lines returned by CLUSTER INFO into a dict."""
+    text = raw.decode('utf-8') if isinstance(raw, bytes) else str(raw)
+
+    info = {}
+    for line in text.splitlines():
+        line = line.strip()
+        if not line or ':' not in line:
+            continue
+        key, value = line.split(':', 1)
+        info[key.strip()] = value.strip()
+
+    return info
+
+
+def assert_nodes_empty(node_ips: List[str], redis_port: int):
+    """
+    Verify every node is a fresh, empty instance before forming the cluster.
+
+    Redis refuses to create a cluster from nodes that already contain keys or
+    already know about other nodes, and CLUSTER RESET will not clear a master
+    that holds keys. Failing here with a clear message beats failing halfway
+    through CLUSTER MEET with a cluster in a half-formed state.
+    """
+    import redis
+
+    problems = []
+
+    for ip in node_ips:
+        node_conn = redis.Redis(host=ip, port=redis_port, decode_responses=True, socket_connect_timeout=5)
+
+        db_size = int(node_conn.execute_command('DBSIZE'))
+        info = parse_cluster_info(node_conn.execute_command('CLUSTER', 'INFO'))
+        known_nodes = int(info.get('cluster_known_nodes', '1'))
+        slots_assigned = int(info.get('cluster_slots_assigned', '0'))
+
+        print(
+            f"Node {ip}:{redis_port} - keys: {db_size}, known nodes: {known_nodes}, "
+            f"slots assigned: {slots_assigned}"
+        )
+
+        if db_size > 0:
+            problems.append(
+                f"{ip}:{redis_port} holds {db_size} key(s) in database 0"
+            )
+        elif known_nodes > 1 or slots_assigned > 0:
+            # No keys, so CLUSTER RESET HARD can clean this up on the next step.
+            print(f"Node {ip} carries stale cluster state but is empty; it will be reset")
+
+    if problems:
+        raise RuntimeError(
+            "Refusing to create the cluster because some nodes are not empty: "
+            + "; ".join(problems)
+            + ". Redis can only form a cluster from empty nodes. Flush the data "
+              "(or replace the tasks) and re-run the initialization."
+        )
+
+    print(f"All {len(node_ips)} nodes are empty and ready to be clustered")
+
+
 def create_cluster_direct(node_ips: List[str], replicas_per_master: int, redis_port: int = 6379):
     """
     Create Redis cluster by using Python redis library to connect directly to nodes.
@@ -192,6 +325,9 @@ def create_cluster_direct(node_ips: List[str], replicas_per_master: int, redis_p
         print(f"Creating cluster with nodes: {node_ips}")
         print(f"Replicas per master: {replicas_per_master}")
         print(f"Redis port: {redis_port}")
+
+        # Refuse to touch nodes that already hold data
+        assert_nodes_empty(node_ips, redis_port)
 
         # First, reset all nodes to clean state in case of previous failed attempts
         print("Resetting all nodes to clean state...")
@@ -213,7 +349,22 @@ def create_cluster_direct(node_ips: List[str], replicas_per_master: int, redis_p
                 print(f"Warning: Could not reset node {ip}: {e}")
                 # Continue anyway, might be a new node
 
-        print("All nodes reset. Starting cluster creation...")
+        print("All nodes reset. Verifying nodes are in a clean state...")
+
+        for ip in node_ips:
+            node_conn = redis.Redis(host=ip, port=redis_port, decode_responses=True, socket_connect_timeout=5)
+            info = parse_cluster_info(node_conn.execute_command('CLUSTER', 'INFO'))
+            known_nodes = int(info.get('cluster_known_nodes', '1'))
+            slots_assigned = int(info.get('cluster_slots_assigned', '0'))
+
+            if known_nodes > 1 or slots_assigned > 0:
+                raise RuntimeError(
+                    f"Node {ip}:{redis_port} still has cluster state after reset "
+                    f"(known nodes: {known_nodes}, slots assigned: {slots_assigned}). "
+                    "Replace the tasks and re-run the initialization."
+                )
+
+        print("All nodes clean. Starting cluster creation...")
 
         # Build node list
         nodes = [{'host': ip, 'port': redis_port} for ip in node_ips]

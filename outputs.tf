@@ -30,12 +30,12 @@ output "security_group_id" {
 
 output "cloudmap_namespace_id" {
   description = "CloudMap namespace ID"
-  value       = aws_service_discovery_private_dns_namespace.redis.id
+  value       = local.service_discovery_namespace_id
 }
 
 output "cloudmap_namespace_name" {
   description = "CloudMap namespace name"
-  value       = aws_service_discovery_private_dns_namespace.redis.name
+  value       = local.service_discovery_namespace_name
 }
 
 output "cloudmap_service_id" {
@@ -50,7 +50,7 @@ output "cloudmap_service_name" {
 
 output "redis_endpoints" {
   description = "Redis cluster endpoints (use CloudMap DNS for discovery)"
-  value       = "${aws_service_discovery_service.redis.name}.${aws_service_discovery_private_dns_namespace.redis.name}"
+  value       = "${aws_service_discovery_service.redis.name}.${local.service_discovery_namespace_name}"
 }
 
 output "redis_port" {
@@ -102,8 +102,8 @@ output "elasticache_compatible" {
     elasticache_replication_group_arn = null
     elasticache_replication_group_id  = var.service_discovery_name
 
-    elasticache_replication_group_primary_endpoint_address = "${aws_service_discovery_service.redis.name}.${aws_service_discovery_private_dns_namespace.redis.name}"
-    elasticache_replication_group_reader_endpoint_address  = "${aws_service_discovery_service.redis.name}.${aws_service_discovery_private_dns_namespace.redis.name}"
+    elasticache_replication_group_primary_endpoint_address = "${aws_service_discovery_service.redis.name}.${local.service_discovery_namespace_name}"
+    elasticache_replication_group_reader_endpoint_address  = "${aws_service_discovery_service.redis.name}.${local.service_discovery_namespace_name}"
 
     security_group_arn         = aws_security_group.redis_cluster.arn
     security_group_description = aws_security_group.redis_cluster.description

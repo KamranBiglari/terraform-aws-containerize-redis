@@ -97,10 +97,22 @@ variable "task_memory" {
   }
 }
 
+variable "create_service_discovery_namespace" {
+  description = "Whether to create a CloudMap private DNS namespace. Set to false to register the Redis service in an existing namespace provided via `existing_service_discovery_namespace_name`."
+  type        = bool
+  default     = true
+}
+
 variable "service_discovery_namespace" {
-  description = "CloudMap namespace for service discovery"
+  description = "Name of the CloudMap private DNS namespace to create. Only used when `create_service_discovery_namespace` is true."
   type        = string
   default     = "redis.local"
+}
+
+variable "existing_service_discovery_namespace_name" {
+  description = "Name of an existing CloudMap private DNS namespace to register the Redis service in. Required when `create_service_discovery_namespace` is false, ignored otherwise. The namespace must already exist when this module is planned."
+  type        = string
+  default     = null
 }
 
 
@@ -208,4 +220,15 @@ variable "existing_cloudwatch_log_group_name" {
   description = "Name of an existing CloudWatch log group to send Redis task logs to. Required when `create_cloudwatch_log_group` is false, ignored otherwise."
   type        = string
   default     = null
+}
+
+variable "cluster_init_timeout" {
+  description = "Timeout in seconds for the cluster initialization Lambda. It has to cover waiting for the ECS service to stabilize plus forming the cluster."
+  type        = number
+  default     = 900
+
+  validation {
+    condition     = var.cluster_init_timeout > 0 && var.cluster_init_timeout <= 900
+    error_message = "Lambda timeout must be between 1 and 900 seconds."
+  }
 }

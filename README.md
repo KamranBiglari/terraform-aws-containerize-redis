@@ -227,6 +227,31 @@ The module creates a security group with:
 - **Port 6379** (`redis_port`) - Redis client connections (from `allowed_cidr_blocks`)
 - **Port 16379** (`redis_cluster_port`, default `redis_port` + 10000) - Redis cluster bus (inter-node communication only)
 
+#### Client access is gated on cluster initialization
+
+Redis will not form a cluster out of nodes that already contain keys, so a client
+that connects and writes before initialization leaves the cluster unformable.
+
+When `enable_cluster_init = true` the `allowed_cidr_blocks` ingress rules are
+therefore managed by the initialization Lambda rather than by Terraform. On every
+deployment - the first one and every restart - the Lambda:
+
+1. revokes the client rules (identified by their description) if the nodes are not
+   already a healthy cluster,
+2. waits for the ECS service to stabilize,
+3. verifies every node is empty (no keys, no cluster state) and refuses to continue
+   otherwise,
+4. forms the cluster, and
+5. re-authorizes the client rules.
+
+If initialization fails, the client rules stay revoked and the next steady-state
+event retries. With `enable_cluster_init = false` there is nothing to wait for and
+Terraform manages the client rules directly.
+
+There is a small window on a restart: the replaced tasks accept connections from
+the moment they start until the Lambda revokes access. Keep `allowed_cidr_blocks`
+as tight as possible.
+
 ### Subnet Selection
 
 **Best Practice:** Use private subnets for Redis cluster
@@ -441,9 +466,18 @@ For issues and questions:
 | [aws_lambda_layer_version.redis_layer](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/lambda_layer_version) | resource |
 | [aws_lambda_permission.allow_cloudwatch](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/lambda_permission) | resource |
 | [aws_security_group.redis_cluster](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/security_group) | resource |
+| [aws_vpc_security_group_egress_rule.redis_all](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/vpc_security_group_egress_rule) | resource |
+| [aws_vpc_security_group_ingress_rule.redis_bus](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/vpc_security_group_ingress_rule) | resource |
+| [aws_vpc_security_group_ingress_rule.redis_client](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/vpc_security_group_ingress_rule) | resource |
+| [aws_vpc_security_group_ingress_rule.redis_node](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/vpc_security_group_ingress_rule) | resource |
 | [aws_service_discovery_private_dns_namespace.redis](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/service_discovery_private_dns_namespace) | resource |
 | [aws_service_discovery_service.redis](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/service_discovery_service) | resource |
 | [null_resource.build_lambda_layer](https://registry.terraform.io/providers/hashicorp/null/latest/docs/resources/resource) | resource |
+| [aws_ecs_cluster.existing](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/data-sources/ecs_cluster) | data source |
+| [aws_region.current](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/data-sources/region) | data source |
+| [aws_service_discovery_dns_namespace.existing](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/data-sources/service_discovery_dns_namespace) | data source |
+| [archive_file.lambda_layer](https://registry.terraform.io/providers/hashicorp/archive/latest/docs/data-sources/file) | data source |
+| [archive_file.lambda_zip](https://registry.terraform.io/providers/hashicorp/archive/latest/docs/data-sources/file) | data source |
 
 ## Inputs
 
@@ -454,11 +488,13 @@ For issues and questions:
 | <a name="input_cluster_name"></a> [cluster\_name](#input\_cluster\_name) | Name prefix for the Redis cluster resources | `string` | n/a | yes |
 | <a name="input_subnet_ids"></a> [subnet\_ids](#input\_subnet\_ids) | List of subnet IDs for Redis tasks (use private subnets) | `list(string)` | n/a | yes |
 | <a name="input_vpc_id"></a> [vpc\_id](#input\_vpc\_id) | VPC ID where Redis cluster will be deployed | `string` | n/a | yes |
-| <a name="input_allowed_cidr_blocks"></a> [allowed\_cidr\_blocks](#input\_allowed\_cidr\_blocks) | CIDR blocks allowed to connect to Redis cluster | `list(string)` | `[]` | no |
+| <a name="input_allowed_cidr_blocks"></a> [allowed\_cidr\_blocks](#input\_allowed\_cidr\_blocks) | CIDR blocks allowed to connect to Redis cluster. When `enable_cluster_init` is true these rules are applied by the initialization Lambda once the cluster is healthy, not at apply time. | `list(string)` | `[]` | no |
 | <a name="input_assign_public_ip"></a> [assign\_public\_ip](#input\_assign\_public\_ip) | Assign public IP to tasks (set to true if using public subnets) | `bool` | `false` | no |
 | <a name="input_aws_region"></a> [aws\_region](#input\_aws\_region) | AWS region for deployment | `string` | `null` | no |
+| <a name="input_cluster_init_timeout"></a> [cluster\_init\_timeout](#input\_cluster\_init\_timeout) | Timeout in seconds for the cluster initialization Lambda. It has to cover waiting for the ECS service to stabilize plus forming the cluster. | `number` | `900` | no |
 | <a name="input_cloudwatch_log_group_name"></a> [cloudwatch\_log\_group\_name](#input\_cloudwatch\_log\_group\_name) | Name of the CloudWatch log group to create. Only used when `create_cloudwatch_log_group` is true. Defaults to `"/ecs/<cluster_name>-redis"`. | `string` | `null` | no |
 | <a name="input_create_cloudwatch_log_group"></a> [create\_cloudwatch\_log\_group](#input\_create\_cloudwatch\_log\_group) | Whether to create a CloudWatch log group for the Redis tasks. Set to false to log into an existing group provided via `existing_cloudwatch_log_group_name`. | `bool` | `true` | no |
+| <a name="input_create_service_discovery_namespace"></a> [create\_service\_discovery\_namespace](#input\_create\_service\_discovery\_namespace) | Whether to create a CloudMap private DNS namespace. Set to false to register the Redis service in an existing namespace provided via `existing_service_discovery_namespace_name`. | `bool` | `true` | no |
 | <a name="input_create_ecs_cluster"></a> [create\_ecs\_cluster](#input\_create\_ecs\_cluster) | Whether to create a new ECS cluster for the Redis service. Set to false to deploy into an existing cluster provided via `existing_ecs_cluster_name`. | `bool` | `true` | no |
 | <a name="input_ecs_cluster_name"></a> [ecs\_cluster\_name](#input\_ecs\_cluster\_name) | Name of the ECS cluster to create. Only used when `create_ecs_cluster` is true. Defaults to `"<cluster_name>-redis"`. | `string` | `null` | no |
 | <a name="input_ecs_service_config_tags"></a> [ecs\_service\_config\_tags](#input\_ecs\_service\_config\_tags) | Tags to apply to aws ecs service | `map(string)` | <pre>{<br/>  "desired_count": "Config:desiredCount"<br/>}</pre> | no |
@@ -466,6 +502,7 @@ For issues and questions:
 | <a name="input_enable_container_insights"></a> [enable\_container\_insights](#input\_enable\_container\_insights) | Enable CloudWatch Container Insights for the ECS cluster | `bool` | `true` | no |
 | <a name="input_enable_ecs_exec"></a> [enable\_ecs\_exec](#input\_enable\_ecs\_exec) | Enable ECS Exec for debugging tasks | `bool` | `false` | no |
 | <a name="input_existing_cloudwatch_log_group_name"></a> [existing\_cloudwatch\_log\_group\_name](#input\_existing\_cloudwatch\_log\_group\_name) | Name of an existing CloudWatch log group to send Redis task logs to. Required when `create_cloudwatch_log_group` is false, ignored otherwise. | `string` | `null` | no |
+| <a name="input_existing_service_discovery_namespace_name"></a> [existing\_service\_discovery\_namespace\_name](#input\_existing\_service\_discovery\_namespace\_name) | Name of an existing CloudMap private DNS namespace to register the Redis service in. Required when `create_service_discovery_namespace` is false, ignored otherwise. The namespace must already exist when this module is planned. | `string` | `null` | no |
 | <a name="input_existing_ecs_cluster_name"></a> [existing\_ecs\_cluster\_name](#input\_existing\_ecs\_cluster\_name) | Name of an existing ECS cluster to deploy the Redis service into. Required when `create_ecs_cluster` is false, ignored otherwise. The cluster must already exist when this module is planned. | `string` | `null` | no |
 | <a name="input_log_retention_days"></a> [log\_retention\_days](#input\_log\_retention\_days) | CloudWatch log retention in days | `number` | `7` | no |
 | <a name="input_redis_cluster_port"></a> [redis\_cluster\_port](#input\_redis\_cluster\_port) | Port for the Redis Cluster bus. Defaults to `redis_port` + 10000, which is the offset Redis itself uses when `cluster-port` is unset. | `number` | `null` | no |
@@ -475,7 +512,7 @@ For issues and questions:
 | <a name="input_redis_port"></a> [redis\_port](#input\_redis\_port) | Port for Redis | `number` | `6379` | no |
 | <a name="input_redis_replica_count"></a> [redis\_replica\_count](#input\_redis\_replica\_count) | Number of Redis replica nodes (total replicas, not per master) | `number` | `3` | no |
 | <a name="input_service_discovery_name"></a> [service\_discovery\_name](#input\_service\_discovery\_name) | CloudMap service name for Redis | `string` | `"redis-cluster"` | no |
-| <a name="input_service_discovery_namespace"></a> [service\_discovery\_namespace](#input\_service\_discovery\_namespace) | CloudMap namespace for service discovery | `string` | `"redis.local"` | no |
+| <a name="input_service_discovery_namespace"></a> [service\_discovery\_namespace](#input\_service\_discovery\_namespace) | Name of the CloudMap private DNS namespace to create. Only used when `create_service_discovery_namespace` is true. | `string` | `"redis.local"` | no |
 | <a name="input_tags"></a> [tags](#input\_tags) | Tags to apply to all resources | `map(string)` | `{}` | no |
 | <a name="input_task_cpu"></a> [task\_cpu](#input\_task\_cpu) | CPU units for Redis task (1024 = 1 vCPU) | `number` | `256` | no |
 | <a name="input_task_memory"></a> [task\_memory](#input\_task\_memory) | Memory for Redis task in MB | `number` | `1024` | no |

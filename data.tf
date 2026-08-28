@@ -15,6 +15,21 @@ data "aws_ecs_cluster" "existing" {
   }
 }
 
+# Existing CloudMap namespace to register into when this module does not create one
+data "aws_service_discovery_dns_namespace" "existing" {
+  count = var.create_service_discovery_namespace ? 0 : 1
+
+  name = var.existing_service_discovery_namespace_name
+  type = "DNS_PRIVATE"
+
+  lifecycle {
+    precondition {
+      condition     = var.existing_service_discovery_namespace_name != null
+      error_message = "existing_service_discovery_namespace_name must be set when create_service_discovery_namespace is false."
+    }
+  }
+}
+
 # Archive Lambda function
 data "archive_file" "lambda_zip" {
   count = var.enable_cluster_init ? 1 : 0

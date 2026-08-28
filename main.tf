@@ -21,35 +21,14 @@ resource "aws_cloudwatch_log_group" "redis" {
 }
 
 # Security Group for Redis Cluster
+#
+# Rules are standalone resources rather than inline blocks: inline rules are
+# authoritative and would fight the client rules, which have to be created
+# after cluster initialization rather than alongside the group.
 resource "aws_security_group" "redis_cluster" {
   name_prefix = "${var.cluster_name}-redis-"
   description = "Security group for Redis cluster"
   vpc_id      = var.vpc_id
-
-  ingress {
-    description = "Redis port"
-    from_port   = local.redis_port
-    to_port     = local.redis_port
-    protocol    = "tcp"
-    cidr_blocks = var.allowed_cidr_blocks
-    self        = true
-  }
-
-  ingress {
-    description = "Redis cluster bus port"
-    from_port   = local.redis_cluster_port
-    to_port     = local.redis_cluster_port
-    protocol    = "tcp"
-    self        = true
-  }
-
-  egress {
-    description = "Allow all outbound"
-    from_port   = 0
-    to_port     = 0
-    protocol    = "-1"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
 
   tags = merge(var.tags, {
     Name = "${var.cluster_name}-redis-sg"
@@ -58,6 +37,66 @@ resource "aws_security_group" "redis_cluster" {
   lifecycle {
     create_before_destroy = true
   }
+}
+
+# Node-to-node traffic. The init Lambda shares this security group, so this also
+# covers the Lambda reaching the nodes while clients are still locked out.
+resource "aws_vpc_security_group_ingress_rule" "redis_node" {
+  security_group_id = aws_security_group.redis_cluster.id
+  description       = "Redis port from cluster members"
+
+  referenced_security_group_id = aws_security_group.redis_cluster.id
+  from_port                    = local.redis_port
+  to_port                      = local.redis_port
+  ip_protocol                  = "tcp"
+
+  tags = var.tags
+}
+
+resource "aws_vpc_security_group_ingress_rule" "redis_bus" {
+  security_group_id = aws_security_group.redis_cluster.id
+  description       = "Redis cluster bus port from cluster members"
+
+  referenced_security_group_id = aws_security_group.redis_cluster.id
+  from_port                    = local.redis_cluster_port
+  to_port                      = local.redis_cluster_port
+  ip_protocol                  = "tcp"
+
+  tags = var.tags
+}
+
+# Client access.
+#
+# When cluster initialization is enabled these rules are managed by the init
+# Lambda, not by Terraform: it revokes them before it forms the cluster and
+# re-authorizes them once the cluster is healthy, on every deployment. Nodes come
+# up as standalone empty instances and Redis refuses to cluster nodes that
+# already hold keys, so clients must stay out until initialization finishes.
+#
+# With initialization disabled there is nothing to wait for, so Terraform manages
+# them directly.
+resource "aws_vpc_security_group_ingress_rule" "redis_client" {
+  for_each = var.enable_cluster_init ? toset([]) : toset(var.allowed_cidr_blocks)
+
+  security_group_id = aws_security_group.redis_cluster.id
+  description       = local.redis_client_rule_description
+
+  cidr_ipv4   = each.value
+  from_port   = local.redis_port
+  to_port     = local.redis_port
+  ip_protocol = "tcp"
+
+  tags = var.tags
+}
+
+resource "aws_vpc_security_group_egress_rule" "redis_all" {
+  security_group_id = aws_security_group.redis_cluster.id
+  description       = "Allow all outbound"
+
+  cidr_ipv4   = "0.0.0.0/0"
+  ip_protocol = "-1"
+
+  tags = var.tags
 }
 
 # IAM Role for ECS Task Execution
@@ -137,6 +176,8 @@ resource "aws_iam_role_policy" "ecs_task_cloudmap_policy" {
 
 # CloudMap Private DNS Namespace
 resource "aws_service_discovery_private_dns_namespace" "redis" {
+  count = var.create_service_discovery_namespace ? 1 : 0
+
   name        = var.service_discovery_namespace
   description = "Private DNS namespace for Redis cluster"
   vpc         = var.vpc_id
@@ -149,7 +190,7 @@ resource "aws_service_discovery_service" "redis" {
   name = var.service_discovery_name
 
   dns_config {
-    namespace_id = aws_service_discovery_private_dns_namespace.redis.id
+    namespace_id = local.service_discovery_namespace_id
 
     dns_records {
       ttl  = 10
@@ -322,8 +363,13 @@ resource "aws_lambda_function" "redis_cluster_init" {
   handler          = "index.handler"
   source_code_hash = data.archive_file.lambda_zip[0].output_base64sha256
   runtime          = "python3.11"
-  timeout          = 300
-  layers           = [aws_lambda_layer_version.redis_layer[0].arn]
+  timeout          = var.cluster_init_timeout
+
+  # Steady-state events can arrive in bursts (a deployment plus a scale change).
+  # One concurrent execution keeps two runs from racing through CLUSTER MEET;
+  # Lambda retries the throttled invocation.
+  reserved_concurrent_executions = 1
+  layers                         = [aws_lambda_layer_version.redis_layer[0].arn]
 
   environment {
     variables = {
@@ -331,11 +377,13 @@ resource "aws_lambda_function" "redis_cluster_init" {
       ECS_SERVICE_NAME    = aws_ecs_service.redis_cluster.name
       REDIS_MASTER_COUNT  = var.redis_master_count
       REDIS_REPLICA_COUNT = var.redis_replica_count
-      CLOUDMAP_NAMESPACE  = var.service_discovery_namespace
+      CLOUDMAP_NAMESPACE  = local.service_discovery_namespace_name
       CLOUDMAP_SERVICE    = aws_service_discovery_service.redis.name
       VPC_ID              = var.vpc_id
       SUBNET_IDS          = join(",", var.subnet_ids)
       SECURITY_GROUP_ID   = aws_security_group.redis_cluster.id
+      ALLOWED_CIDR_BLOCKS = join(",", var.allowed_cidr_blocks)
+      CLIENT_RULE_DESC    = local.redis_client_rule_description
       REDIS_PORT          = tostring(local.redis_port)
       REDIS_CLUSTER_PORT  = tostring(local.redis_cluster_port)
     }
@@ -410,9 +458,19 @@ resource "aws_iam_role_policy" "lambda_ecs_policy" {
       {
         Effect = "Allow"
         Action = [
-          "ec2:DescribeNetworkInterfaces"
+          "ec2:DescribeNetworkInterfaces",
+          "ec2:DescribeSecurityGroups",
+          "ec2:DescribeSecurityGroupRules"
         ]
         Resource = "*"
+      },
+      {
+        Effect = "Allow"
+        Action = [
+          "ec2:AuthorizeSecurityGroupIngress",
+          "ec2:RevokeSecurityGroupIngress"
+        ]
+        Resource = aws_security_group.redis_cluster.arn
       },
       {
         Effect = "Allow"
@@ -452,7 +510,9 @@ resource "null_resource" "build_lambda_layer" {
   }
 }
 
-# CloudWatch Event Rule to trigger Lambda after service stabilizes
+# Re-initialize whenever the service reaches steady state again - a restart, a
+# scale change, or a new task definition all replace the Redis nodes. The Lambda
+# is a no-op when it finds a healthy cluster already in place.
 resource "aws_cloudwatch_event_rule" "ecs_service_stable" {
   count = var.enable_cluster_init ? 1 : 0
 
