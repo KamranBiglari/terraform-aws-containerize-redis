@@ -662,7 +662,12 @@ resource "null_resource" "build_lambda_layer" {
 
   provisioner "local-exec" {
     interpreter = var.lambda_layer_build_interpreter
-    command     = "./lambda/build_layer.sh"
+
+    # Invoked through bash rather than executed directly: the script's mode bit
+    # does not survive every checkout (Windows clones, archive downloads, module
+    # sources that unpack without permissions), and a non-executable file fails
+    # with a bare "Permission denied".
+    command     = "bash ./lambda/build_layer.sh"
     working_dir = path.module
   }
 }
