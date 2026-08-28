@@ -35,3 +35,8 @@ override.tf.json
 # Ignore CLI configuration files
 .terraformrc
 terraform.rc
+
+# Lambda layer build artifacts (rebuilt by lambda/build_layer.sh)
+lambda/layer/
+lambda/redis_layer.zip
+lambda/redis_cluster_init.zip

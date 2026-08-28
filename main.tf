@@ -499,13 +499,18 @@ resource "null_resource" "build_lambda_layer" {
 
   triggers = {
     requirements = filemd5("${path.module}/lambda/requirements.txt")
+    build_script = filemd5("${path.module}/lambda/build_layer.sh")
+
+    # The built layer is not part of the module source, so a module directory that
+    # was just downloaded (a new machine, a CI runner, a cleaned .terraform) has no
+    # lambda/layer to archive. Rebuild whenever it is missing instead of trusting
+    # that a previous apply on some other machine produced it.
+    layer_present = length(fileset("${path.module}/lambda", "layer/python/redis/__init__.py")) > 0 ? "present" : "missing"
   }
 
   provisioner "local-exec" {
-    interpreter = [
-      "bash", "-i", "-c"
-    ]
-    command     = "bash ./lambda/build_layer.sh"
+    interpreter = var.lambda_layer_build_interpreter
+    command     = "./lambda/build_layer.sh"
     working_dir = path.module
   }
 }
