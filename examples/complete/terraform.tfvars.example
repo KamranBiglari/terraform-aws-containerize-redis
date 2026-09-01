@@ -6,7 +6,11 @@ cluster_name = "my-redis-cluster"
 # Your VPC and Subnet IDs
 vpc_id = "vpc-xxxxxxxxx"
 subnet_ids = [
-  "subnet-xxxxxxxxx",  # Private subnet 1
-  "subnet-yyyyyyyyy",  # Private subnet 2
-  "subnet-zzzzzzzzz"   # Private subnet 3
+  "subnet-xxxxxxxxx", # Private subnet 1
+  "subnet-yyyyyyyyy", # Private subnet 2
+  "subnet-zzzzzzzzz"  # Private subnet 3
 ]
+
+# Optional: supply the Redis password instead of letting the module generate one.
+# Prefer passing it through TF_VAR_redis_password rather than committing it here.
+# redis_password = "..."

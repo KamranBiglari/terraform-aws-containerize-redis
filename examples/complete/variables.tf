@@ -19,3 +19,10 @@ variable "subnet_ids" {
   description = "List of subnet IDs (use private subnets)"
   type        = list(string)
 }
+
+variable "redis_password" {
+  description = "Password for the Redis cluster. Left null, the module generates one and stores it in Secrets Manager."
+  type        = string
+  default     = null
+  sensitive   = true
+}

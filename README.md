@@ -42,8 +42,12 @@ This module creates:
 ## Prerequisites
 
 - AWS Account with appropriate permissions
-- Terraform >= 1.0
+- Terraform >= 1.3
 - VPC with private subnets (recommended)
+- `bash` on the machine running Terraform, plus Docker (recommended) or Python 3
+  with pip, to build the initialization Lambda layer - see
+  [Building the Lambda layer](#building-the-lambda-layer). Not needed with
+  `enable_cluster_init = false`.
 - Redis CLI tools (for manual initialization)
 
 ## Usage
@@ -63,7 +67,8 @@ module "redis_cluster" {
   redis_master_count  = 3  # Minimum 3 masters required
   redis_replica_count = 3  # Total replicas (distributed across masters)
 
-  # Network access
+  # Network access. With cluster initialization enabled (the default) these rules
+  # are applied by the init Lambda once the cluster is healthy, not during apply.
   allowed_cidr_blocks = ["10.0.0.0/16"]
 
   tags = {
@@ -72,6 +77,11 @@ module "redis_cluster" {
 }
 ```
 
+This creates its own ECS cluster, CloudWatch log group and CloudMap namespace, and
+runs Redis without a password. Each of those is optional - see
+[Using existing infrastructure](#using-existing-infrastructure) and
+[Authentication](#authentication).
+
 ### Complete Example with All Options
 
 ```hcl
@@ -79,35 +89,68 @@ module "redis_cluster" {
   source = "KamranBiglari/containerize-redis/aws"
 
   # Basic Configuration
-  cluster_name                = "production-redis"
-  vpc_id                      = "vpc-xxxxx"
-  subnet_ids                  = ["subnet-xxxxx", "subnet-yyyyy", "subnet-zzzzz"]
-  aws_region                  = "us-east-1"
+  cluster_name = "production-redis"
+  vpc_id       = "vpc-xxxxx"
+  subnet_ids   = ["subnet-xxxxx", "subnet-yyyyy", "subnet-zzzzz"]
+  aws_region   = "us-east-1"
 
   # Redis Cluster Configuration
-  redis_master_count   = 3   # Number of master nodes (min 3)
-  redis_replica_count  = 3   # Number of replicas (1 per master)
-  redis_image          = "redis:7.2-alpine"
+  redis_master_count  = 3 # Number of master nodes (min 3)
+  redis_replica_count = 3 # Number of replicas (1 per master)
+  redis_image         = "redis:7.2-alpine"
+
+  # Ports. redis_cluster_port defaults to redis_port + 10000, the offset Redis
+  # itself uses, so set it only to pin a specific bus port.
+  redis_port = 6379
 
   # Task Resources
-  task_cpu    = 1024  # 1 vCPU
-  task_memory = 2048  # 2GB RAM
+  task_cpu    = 1024 # 1 vCPU
+  task_memory = 2048 # 2GB RAM
 
   # Networking
   assign_public_ip    = false
   allowed_cidr_blocks = ["10.0.0.0/8"]
 
-  # Service Discovery
-  service_discovery_namespace = "redis.local"
+  # ECS cluster: created here, or reuse one you already run
+  create_ecs_cluster = true
+  ecs_cluster_name   = "production-redis-cluster"
+  # create_ecs_cluster        = false
+  # existing_ecs_cluster_name = "shared-infrastructure"
+
+  # CloudWatch logs
+  create_cloudwatch_log_group = true
+  log_retention_days          = 30
+  # create_cloudwatch_log_group        = false
+  # existing_cloudwatch_log_group_name = "/ecs/shared"
+
+  # Service discovery
+  create_service_discovery_namespace = true
+  service_discovery_namespace        = "redis.local"
+  service_discovery_name             = "redis-cluster"
+  # create_service_discovery_namespace        = false
+  # existing_service_discovery_namespace_name = "services.internal"
+  # existing_service_discovery_namespace_type = "DNS_PRIVATE"
+
+  # Authentication. Omit all of these to run without a password.
+  create_redis_password_secret = true
+  redis_password               = var.redis_password # generated when not supplied
+  # existing_redis_password_secret_arn = aws_secretsmanager_secret.redis.arn
+  # existing_redis_password_secret_key = "password"
+
+  # Cluster initialization
+  enable_cluster_init       = true # Auto-initialize on every deployment
+  cluster_init_timeout      = 900
+  lambda_layer_build_method = "auto" # auto | docker | python
+
+  # Extra time on destroy for CloudMap instances to deregister
+  service_discovery_deregistration_delay = "120s"
 
   # Features
   enable_container_insights = true
-  enable_ecs_exec          = true   # For debugging
-  enable_cluster_init      = true   # Auto-initialize cluster
-  log_retention_days       = 30
+  enable_ecs_exec           = true # For debugging
 
   # Environment Variables (optional)
-  # Note: REDIS_PORT and REDIS_CLUSTER_PORT are automatically set
+  # Note: REDIS_PORT and REDIS_CLUSTER_PORT are set by the module
   redis_environment_variables = [
     {
       name  = "TZ"
@@ -122,6 +165,22 @@ module "redis_cluster" {
   }
 }
 ```
+
+A runnable version of this lives in [examples/complete](examples/complete).
+
+### Using existing infrastructure
+
+Everything the module creates alongside the Redis service can be swapped for
+something you already have. Each follows the same three-variable shape: a
+`create_*` toggle, a name used when creating, and an `existing_*` value used when
+reusing.
+
+| Resource | Create | Reuse |
+|----------|--------|-------|
+| ECS cluster | `create_ecs_cluster`, `ecs_cluster_name` | `existing_ecs_cluster_name` |
+| CloudWatch log group | `create_cloudwatch_log_group`, `cloudwatch_log_group_name` | `existing_cloudwatch_log_group_name` |
+| CloudMap namespace | `create_service_discovery_namespace`, `service_discovery_namespace` | `existing_service_discovery_namespace_name`, `existing_service_discovery_namespace_type` |
+| Password secret | `create_redis_password_secret`, `redis_password`, `redis_password_secret_name` | `existing_redis_password_secret_arn`, `existing_redis_password_secret_key` |
 
 ## Cluster Configuration
 
@@ -182,6 +241,28 @@ Set `enable_cluster_init = true` to use the Lambda-based automatic initializatio
 - Runs `redis-cli --cluster create` command
 - Verifies cluster is healthy
 
+The Lambda runs on **every** deployment, not just the first: a restart or a new
+task definition replaces every Redis node, and the replacements come back empty
+with new IPs. It is a no-op when it finds a healthy cluster already in place.
+
+### Building the Lambda layer
+
+The Lambda needs a layer containing `redis-py`. It is built locally during
+`terraform apply` by `lambda/build_layer.sh`, and rebuilt whenever it is missing -
+the built layer is not part of the module source, so a freshly downloaded module
+directory has none.
+
+By default (`lambda_layer_build_method = "auto"`) the build runs in a container and
+needs nothing on the machine except `bash` and Docker. Without Docker it falls back
+to the host's `python3`/`pip`, which is convenient locally but depends on what the
+machine has installed - and off Linux/x86\_64 it can produce wheels the Lambda
+runtime cannot load. Set the method to `docker` to fail loudly instead of falling
+back, or to `python` to skip Docker entirely. `lambda_layer_build_image` selects the
+build image.
+
+CI runners generally have Docker (`ubuntu-latest` does), so `auto` resolves to the
+container build there.
+
 ### Manual Initialization
 
 If you prefer manual control or automatic initialization fails:
@@ -227,7 +308,31 @@ The module creates a security group with:
 - **Port 6379** (`redis_port`) - Redis client connections (from `allowed_cidr_blocks`)
 - **Port 16379** (`redis_cluster_port`, default `redis_port` + 10000) - Redis cluster bus (inter-node communication only)
 
-#### Authentication
+#### Client access is gated on cluster initialization
+
+Redis will not form a cluster out of nodes that already contain keys, so a client
+that connects and writes before initialization leaves the cluster unformable.
+
+With `enable_cluster_init = true` the `allowed_cidr_blocks` rules are therefore
+managed by the initialization Lambda rather than by Terraform. On every deployment
+it:
+
+1. revokes the client rules (matched by description) unless the nodes are already a
+   healthy cluster,
+2. waits for the ECS service to stabilize,
+3. verifies every node is empty - no keys, no cluster state - and refuses to
+   continue otherwise,
+4. forms the cluster, and
+5. re-authorizes the client rules.
+
+If initialization fails the rules stay revoked, and the next steady-state event
+retries. With `enable_cluster_init = false` Terraform manages the rules directly.
+
+There is a small window on a restart: replaced tasks accept connections from the
+moment they start until the Lambda revokes access. Keep `allowed_cidr_blocks` as
+tight as possible.
+
+### Authentication
 
 Redis runs without a password by default. Turning on AUTH means having a secret,
 and the module can either create one or use one you already have.
@@ -236,20 +341,19 @@ Let the module create it - the password is generated unless you pass one:
 
 ```hcl
 create_redis_password_secret = true
-redis_password               = var.redis_password   # optional
+redis_password               = var.redis_password # optional
 ```
 
 Or point it at a secret you manage:
 
 ```hcl
 existing_redis_password_secret_arn = aws_secretsmanager_secret.redis.arn
-existing_redis_password_secret_key = "password"     # omit if the secret is the raw password
+existing_redis_password_secret_key = "password" # omit if the secret is the raw password
 ```
 
-Either way the secret's ARN comes back as the `redis_password_secret_arn` output.
-
-A secret created by the module holds a connection document rather than a bare
-password, so an application can get everything it needs from one place:
+Either way the ARN comes back as the `redis_password_secret_arn` output. A secret
+created by the module holds a connection document rather than a bare password, so
+an application can get everything it needs from one place:
 
 ```json
 {
@@ -260,59 +364,15 @@ password, so an application can get everything it needs from one place:
 }
 ```
 
-The container reads the `password` key out of it (`<arn>:password::`). An existing
-secret is used as-is: give `existing_redis_password_secret_key` when yours is JSON,
-or leave it null when the secret's value is the password itself.
-
-The password is never rendered into Terraform state or the task definition: ECS
-injects it as the `REDIS_PASSWORD` container secret, and the nodes start with
-`--requirepass` and `--masterauth` (replicas need the latter to authenticate to
-their master). The health check and the initialization Lambda authenticate with
-the same secret - the Lambda reads it at runtime, so its role is granted
-`secretsmanager:GetSecretValue` on that secret only.
+The password is never rendered into the task definition: ECS injects it as the
+`REDIS_PASSWORD` container secret, and nodes start with `--requirepass` and
+`--masterauth` (replicas need the latter to authenticate to their master). The
+health check and the initialization Lambda authenticate with the same secret.
 
 Clients then need the password: `redis-cli -c -h <endpoint> -a <password>`.
 
-#### Client access is gated on cluster initialization
-
-Redis will not form a cluster out of nodes that already contain keys, so a client
-that connects and writes before initialization leaves the cluster unformable.
-
-When `enable_cluster_init = true` the `allowed_cidr_blocks` ingress rules are
-therefore managed by the initialization Lambda rather than by Terraform. On every
-deployment - the first one and every restart - the Lambda:
-
-1. revokes the client rules (identified by their description) if the nodes are not
-   already a healthy cluster,
-2. waits for the ECS service to stabilize,
-3. verifies every node is empty (no keys, no cluster state) and refuses to continue
-   otherwise,
-4. forms the cluster, and
-5. re-authorizes the client rules.
-
-If initialization fails, the client rules stay revoked and the next steady-state
-event retries. With `enable_cluster_init = false` there is nothing to wait for and
-Terraform manages the client rules directly.
-
-There is a small window on a restart: the replaced tasks accept connections from
-the moment they start until the Lambda revokes access. Keep `allowed_cidr_blocks`
-as tight as possible.
-
-### Building the initialization Lambda layer
-
-`enable_cluster_init` needs a Lambda layer containing `redis-py`, which is built
-locally during `terraform apply` by `lambda/build_layer.sh`. The layer is not part
-of the module source, so it is rebuilt whenever it is missing.
-
-By default (`lambda_layer_build_method = "auto"`) the build runs in a container
-and needs nothing on the machine except `bash` and Docker. Without Docker it falls
-back to the host's `python3`/`pip`, which is convenient locally but depends on what
-the machine has installed - and off Linux/x86\_64 it can install wheels the Lambda
-runtime cannot load. Set the method to `docker` to fail loudly instead of falling
-back, or to `python` to skip Docker entirely.
-
-CI runners generally have Docker (`ubuntu-latest` does), so `auto` resolves to the
-container build there.
+Note that the password is stored in Terraform state whether you supply it or let
+the module generate it, so treat state as sensitive.
 
 ### Subnet Selection
 
@@ -463,23 +523,23 @@ dig redis-cluster.redis.local
 InvalidParameterException: Creation of service was not idempotent.
 ```
 
-ECS reserves a deleted service's name while its tasks drain, and rejects a
-`CreateService` call with that name until the drain completes. It surfaces when the
-service is replaced under the same name, since Terraform destroys and recreates it
-in one pass. Re-running the apply succeeds once the old tasks are gone.
+ECS reserves a deleted service's name while its tasks drain, and rejects
+`CreateService` with that name until the drain finishes. It appears when the
+service is replaced under an unchanged name, since Terraform destroys and recreates
+it in a single pass. Re-running the apply succeeds once the old tasks are gone.
 
-The durable fix is to stop the replacement from happening. Only `name`, `cluster`,
-`launch_type`, `service_registries` and `deployment_controller` force one, and
-`service_registries` is the usual culprit: replacing the CloudMap service - by
-changing `service_discovery_name`, the namespace, or switching between a created
-and an existing namespace - cascades into replacing the ECS service. Check which
-attribute is responsible with:
+The durable fix is to stop the replacement. Only `name`, `cluster`, `launch_type`,
+`service_registries` and `deployment_controller` force one. Find the culprit with:
 
 ```bash
 terraform plan | grep -A5 "aws_ecs_service.redis_cluster must be replaced"
 ```
 
-In CI, retrying the apply once is a reasonable guard:
+If `cluster` shows `(known after apply)`, the cluster name reaching the module is
+not known at plan time - pass a literal name rather than a computed value. If
+`service_registries` is responsible, something is replacing the CloudMap service.
+
+In CI, retrying once is a reasonable guard:
 
 ```yaml
 - name: Terraform apply
@@ -492,10 +552,10 @@ In CI, retrying the apply once is a reasonable guard:
 ResourceInUse: Service contains registered instances; delete the instances before deleting the service
 ```
 
-The same class of race on the way down: ECS deregisters CloudMap instances
-asynchronously after the service is deleted. The module waits between the two
-steps - raise `service_discovery_deregistration_delay` if the default is not
-enough - and re-running the destroy always clears it.
+The same race on the way down: ECS deregisters CloudMap instances asynchronously
+after the service is deleted. The module waits between the two steps - raise
+`service_discovery_deregistration_delay` if the default is not enough - and
+re-running the destroy always clears it.
 
 ### High Memory Usage
 
@@ -534,8 +594,8 @@ For issues and questions:
 | <a name="requirement_terraform"></a> [terraform](#requirement\_terraform) | >= 1.3 |
 | <a name="requirement_archive"></a> [archive](#requirement\_archive) | >= 2.0 |
 | <a name="requirement_aws"></a> [aws](#requirement\_aws) | >= 5.0 |
-| <a name="requirement_time"></a> [time](#requirement\_time) | >= 0.9 |
 | <a name="requirement_random"></a> [random](#requirement\_random) | >= 3.0 |
+| <a name="requirement_time"></a> [time](#requirement\_time) | >= 0.9 |
 
 ## Providers
 
@@ -546,6 +606,8 @@ For issues and questions:
 | <a name="provider_archive"></a> [archive](#provider\_archive) | >= 2.0 |
 | <a name="provider_aws"></a> [aws](#provider\_aws) | >= 5.0 |
 | <a name="provider_null"></a> [null](#provider\_null) | n/a |
+| <a name="provider_random"></a> [random](#provider\_random) | >= 3.0 |
+| <a name="provider_time"></a> [time](#provider\_time) | >= 0.9 |
 
 ## Resources
 
@@ -573,21 +635,15 @@ For issues and questions:
 | [aws_secretsmanager_secret.redis_password](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/secretsmanager_secret) | resource |
 | [aws_secretsmanager_secret_version.redis_password](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/secretsmanager_secret_version) | resource |
 | [aws_security_group.redis_cluster](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/security_group) | resource |
-| [random_password.redis](https://registry.terraform.io/providers/hashicorp/random/latest/docs/resources/password) | resource |
+| [aws_service_discovery_private_dns_namespace.redis](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/service_discovery_private_dns_namespace) | resource |
+| [aws_service_discovery_service.redis](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/service_discovery_service) | resource |
 | [aws_vpc_security_group_egress_rule.redis_all](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/vpc_security_group_egress_rule) | resource |
 | [aws_vpc_security_group_ingress_rule.redis_bus](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/vpc_security_group_ingress_rule) | resource |
 | [aws_vpc_security_group_ingress_rule.redis_client](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/vpc_security_group_ingress_rule) | resource |
 | [aws_vpc_security_group_ingress_rule.redis_node](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/vpc_security_group_ingress_rule) | resource |
-| [aws_service_discovery_private_dns_namespace.redis](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/service_discovery_private_dns_namespace) | resource |
-| [aws_service_discovery_service.redis](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/service_discovery_service) | resource |
 | [null_resource.build_lambda_layer](https://registry.terraform.io/providers/hashicorp/null/latest/docs/resources/resource) | resource |
+| [random_password.redis](https://registry.terraform.io/providers/hashicorp/random/latest/docs/resources/password) | resource |
 | [time_sleep.service_discovery_deregistration](https://registry.terraform.io/providers/hashicorp/time/latest/docs/resources/sleep) | resource |
-| [aws_caller_identity.current](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/data-sources/caller_identity) | data source |
-| [aws_partition.current](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/data-sources/partition) | data source |
-| [aws_region.current](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/data-sources/region) | data source |
-| [aws_service_discovery_dns_namespace.existing](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/data-sources/service_discovery_dns_namespace) | data source |
-| [archive_file.lambda_layer](https://registry.terraform.io/providers/hashicorp/archive/latest/docs/data-sources/file) | data source |
-| [archive_file.lambda_zip](https://registry.terraform.io/providers/hashicorp/archive/latest/docs/data-sources/file) | data source |
 
 ## Inputs
 
@@ -598,26 +654,26 @@ For issues and questions:
 | <a name="input_cluster_name"></a> [cluster\_name](#input\_cluster\_name) | Name prefix for the Redis cluster resources | `string` | n/a | yes |
 | <a name="input_subnet_ids"></a> [subnet\_ids](#input\_subnet\_ids) | List of subnet IDs for Redis tasks (use private subnets) | `list(string)` | n/a | yes |
 | <a name="input_vpc_id"></a> [vpc\_id](#input\_vpc\_id) | VPC ID where Redis cluster will be deployed | `string` | n/a | yes |
-| <a name="input_allowed_cidr_blocks"></a> [allowed\_cidr\_blocks](#input\_allowed\_cidr\_blocks) | CIDR blocks allowed to connect to Redis cluster. When `enable_cluster_init` is true these rules are applied by the initialization Lambda once the cluster is healthy, not at apply time. | `list(string)` | `[]` | no |
+| <a name="input_allowed_cidr_blocks"></a> [allowed\_cidr\_blocks](#input\_allowed\_cidr\_blocks) | CIDR blocks allowed to connect to Redis cluster | `list(string)` | `[]` | no |
 | <a name="input_assign_public_ip"></a> [assign\_public\_ip](#input\_assign\_public\_ip) | Assign public IP to tasks (set to true if using public subnets) | `bool` | `false` | no |
 | <a name="input_aws_region"></a> [aws\_region](#input\_aws\_region) | AWS region for deployment | `string` | `null` | no |
-| <a name="input_cluster_init_timeout"></a> [cluster\_init\_timeout](#input\_cluster\_init\_timeout) | Timeout in seconds for the cluster initialization Lambda. It has to cover waiting for the ECS service to stabilize plus forming the cluster. | `number` | `900` | no |
 | <a name="input_cloudwatch_log_group_name"></a> [cloudwatch\_log\_group\_name](#input\_cloudwatch\_log\_group\_name) | Name of the CloudWatch log group to create. Only used when `create_cloudwatch_log_group` is true. Defaults to `"/ecs/<cluster_name>-redis"`. | `string` | `null` | no |
+| <a name="input_cluster_init_timeout"></a> [cluster\_init\_timeout](#input\_cluster\_init\_timeout) | Timeout in seconds for the cluster initialization Lambda. It has to cover waiting for the ECS service to stabilize plus forming the cluster. | `number` | `900` | no |
 | <a name="input_create_cloudwatch_log_group"></a> [create\_cloudwatch\_log\_group](#input\_create\_cloudwatch\_log\_group) | Whether to create a CloudWatch log group for the Redis tasks. Set to false to log into an existing group provided via `existing_cloudwatch_log_group_name`. | `bool` | `true` | no |
+| <a name="input_create_ecs_cluster"></a> [create\_ecs\_cluster](#input\_create\_ecs\_cluster) | Whether to create a new ECS cluster for the Redis service. Set to false to deploy into an existing cluster provided via `existing_ecs_cluster_name`. | `bool` | `true` | no |
 | <a name="input_create_redis_password_secret"></a> [create\_redis\_password\_secret](#input\_create\_redis\_password\_secret) | Whether to create a Secrets Manager secret holding the Redis password. Setting this, or `existing_redis_password_secret_arn`, turns on Redis AUTH; with neither the cluster runs unauthenticated. | `bool` | `false` | no |
 | <a name="input_create_service_discovery_namespace"></a> [create\_service\_discovery\_namespace](#input\_create\_service\_discovery\_namespace) | Whether to create a CloudMap private DNS namespace. Set to false to register the Redis service in an existing namespace provided via `existing_service_discovery_namespace_name`. | `bool` | `true` | no |
-| <a name="input_create_ecs_cluster"></a> [create\_ecs\_cluster](#input\_create\_ecs\_cluster) | Whether to create a new ECS cluster for the Redis service. Set to false to deploy into an existing cluster provided via `existing_ecs_cluster_name`. | `bool` | `true` | no |
 | <a name="input_ecs_cluster_name"></a> [ecs\_cluster\_name](#input\_ecs\_cluster\_name) | Name of the ECS cluster to create. Only used when `create_ecs_cluster` is true. Defaults to `"<cluster_name>-redis"`. | `string` | `null` | no |
 | <a name="input_ecs_service_config_tags"></a> [ecs\_service\_config\_tags](#input\_ecs\_service\_config\_tags) | Tags to apply to aws ecs service | `map(string)` | <pre>{<br/>  "desired_count": "Config:desiredCount"<br/>}</pre> | no |
 | <a name="input_enable_cluster_init"></a> [enable\_cluster\_init](#input\_enable\_cluster\_init) | Enable automatic cluster initialization using Lambda via ECS Exec (automatically enables ECS Exec on the service) | `bool` | `true` | no |
 | <a name="input_enable_container_insights"></a> [enable\_container\_insights](#input\_enable\_container\_insights) | Enable CloudWatch Container Insights for the ECS cluster | `bool` | `true` | no |
 | <a name="input_enable_ecs_exec"></a> [enable\_ecs\_exec](#input\_enable\_ecs\_exec) | Enable ECS Exec for debugging tasks | `bool` | `false` | no |
 | <a name="input_existing_cloudwatch_log_group_name"></a> [existing\_cloudwatch\_log\_group\_name](#input\_existing\_cloudwatch\_log\_group\_name) | Name of an existing CloudWatch log group to send Redis task logs to. Required when `create_cloudwatch_log_group` is false, ignored otherwise. | `string` | `null` | no |
+| <a name="input_existing_ecs_cluster_name"></a> [existing\_ecs\_cluster\_name](#input\_existing\_ecs\_cluster\_name) | Name of an existing ECS cluster to deploy the Redis service into. Required when `create_ecs_cluster` is false, ignored otherwise. | `string` | `null` | no |
 | <a name="input_existing_redis_password_secret_arn"></a> [existing\_redis\_password\_secret\_arn](#input\_existing\_redis\_password\_secret\_arn) | ARN of an existing Secrets Manager secret holding the Redis password. Use instead of `create_redis_password_secret` to bring your own secret. | `string` | `null` | no |
 | <a name="input_existing_redis_password_secret_key"></a> [existing\_redis\_password\_secret\_key](#input\_existing\_redis\_password\_secret\_key) | Key to read from an existing JSON-encoded secret, for example `password`. Leave null when the secret's value is the password itself. Only used with `existing_redis_password_secret_arn`. | `string` | `null` | no |
-| <a name="input_existing_service_discovery_namespace_type"></a> [existing\_service\_discovery\_namespace\_type](#input\_existing\_service\_discovery\_namespace\_type) | Type of the existing CloudMap namespace to look up: `DNS_PRIVATE` or `DNS_PUBLIC`. Only used when `create_service_discovery_namespace` is false. | `string` | `"DNS_PRIVATE"` | no |
 | <a name="input_existing_service_discovery_namespace_name"></a> [existing\_service\_discovery\_namespace\_name](#input\_existing\_service\_discovery\_namespace\_name) | Name of an existing CloudMap private DNS namespace to register the Redis service in. Required when `create_service_discovery_namespace` is false, ignored otherwise. The namespace must already exist when this module is planned. | `string` | `null` | no |
-| <a name="input_existing_ecs_cluster_name"></a> [existing\_ecs\_cluster\_name](#input\_existing\_ecs\_cluster\_name) | Name of an existing ECS cluster to deploy the Redis service into. Required when `create_ecs_cluster` is false, ignored otherwise. | `string` | `null` | no |
+| <a name="input_existing_service_discovery_namespace_type"></a> [existing\_service\_discovery\_namespace\_type](#input\_existing\_service\_discovery\_namespace\_type) | Type of the existing CloudMap namespace to look up: `DNS_PRIVATE` or `DNS_PUBLIC`. Only used when `create_service_discovery_namespace` is false. | `string` | `"DNS_PRIVATE"` | no |
 | <a name="input_lambda_layer_build_image"></a> [lambda\_layer\_build\_image](#input\_lambda\_layer\_build\_image) | Container image used to build the Lambda layer when the build method resolves to Docker. | `string` | `"public.ecr.aws/sam/build-python3.11"` | no |
 | <a name="input_lambda_layer_build_interpreter"></a> [lambda\_layer\_build\_interpreter](#input\_lambda\_layer\_build\_interpreter) | Interpreter used to run `lambda/build_layer.sh`, which builds the Lambda layer. The default needs `bash` on PATH - on Windows, Git Bash satisfies this. | `list(string)` | <pre>[<br/>  "bash",<br/>  "-c"<br/>]</pre> | no |
 | <a name="input_lambda_layer_build_method"></a> [lambda\_layer\_build\_method](#input\_lambda\_layer\_build\_method) | How to build the Lambda layer: `docker` builds it in a container matching the Lambda runtime, `python` uses the host's pip, and `auto` prefers Docker and falls back to pip. Docker needs nothing installed beyond Docker itself and is the only option that guarantees Linux/x86\_64 wheels. | `string` | `"auto"` | no |
