@@ -1,6 +1,11 @@
 <!-- BEGIN_TF_DOCS -->
 # Redis Cluster on AWS ECS Fargate using Terraform
 
+[![Terraform Registry](https://img.shields.io/badge/Terraform%20Registry-KamranBiglari%2Fcontainerize--redis-blue)](https://registry.terraform.io/modules/KamranBiglari/containerize-redis/aws/latest)
+[![GitHub](https://img.shields.io/badge/GitHub-KamranBiglari%2Fterraform--aws--containerize--redis-black)](https://github.com/KamranBiglari/terraform-aws-containerize-redis)
+![Terraform](https://img.shields.io/badge/Terraform-%3E%3D%201.0-purple)
+![AWS](https://img.shields.io/badge/AWS-IAM%20%7C%20S3%20%7C%20CloudFront-orange)
+
 A Terraform module to deploy a production-ready Redis cluster on AWS ECS Fargate with automatic service discovery using AWS CloudMap.
 
 ![Redis Cluster on AWS ECS Fargate](https://raw.githubusercontent.com/KamranBiglari/terraform-aws-containerize-redis/main/images/social-preview_1.png)
