@@ -210,7 +210,7 @@ variable "ecs_cluster_name" {
 }
 
 variable "existing_ecs_cluster_name" {
-  description = "Name of an existing ECS cluster to deploy the Redis service into. Required when `create_ecs_cluster` is false, ignored otherwise. The cluster must already exist when this module is planned."
+  description = "Name of an existing ECS cluster to deploy the Redis service into. Required when `create_ecs_cluster` is false, ignored otherwise."
   type        = string
   default     = null
 }

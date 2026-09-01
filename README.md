@@ -457,6 +457,46 @@ aws logs tail /aws/lambda/<cluster-name>-redis-cluster-init --follow
 dig redis-cluster.redis.local
 ```
 
+### Apply fails: "Creation of service was not idempotent"
+
+```
+InvalidParameterException: Creation of service was not idempotent.
+```
+
+ECS reserves a deleted service's name while its tasks drain, and rejects a
+`CreateService` call with that name until the drain completes. It surfaces when the
+service is replaced under the same name, since Terraform destroys and recreates it
+in one pass. Re-running the apply succeeds once the old tasks are gone.
+
+The durable fix is to stop the replacement from happening. Only `name`, `cluster`,
+`launch_type`, `service_registries` and `deployment_controller` force one, and
+`service_registries` is the usual culprit: replacing the CloudMap service - by
+changing `service_discovery_name`, the namespace, or switching between a created
+and an existing namespace - cascades into replacing the ECS service. Check which
+attribute is responsible with:
+
+```bash
+terraform plan | grep -A5 "aws_ecs_service.redis_cluster must be replaced"
+```
+
+In CI, retrying the apply once is a reasonable guard:
+
+```yaml
+- name: Terraform apply
+  run: terraform apply -auto-approve || (sleep 120 && terraform apply -auto-approve)
+```
+
+### Destroy fails: "Service contains registered instances"
+
+```
+ResourceInUse: Service contains registered instances; delete the instances before deleting the service
+```
+
+The same class of race on the way down: ECS deregisters CloudMap instances
+asynchronously after the service is deleted. The module waits between the two
+steps - raise `service_discovery_deregistration_delay` if the default is not
+enough - and re-running the destroy always clears it.
+
 ### High Memory Usage
 
 - Increase `task_memory`
@@ -542,7 +582,8 @@ For issues and questions:
 | [aws_service_discovery_service.redis](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/service_discovery_service) | resource |
 | [null_resource.build_lambda_layer](https://registry.terraform.io/providers/hashicorp/null/latest/docs/resources/resource) | resource |
 | [time_sleep.service_discovery_deregistration](https://registry.terraform.io/providers/hashicorp/time/latest/docs/resources/sleep) | resource |
-| [aws_ecs_cluster.existing](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/data-sources/ecs_cluster) | data source |
+| [aws_caller_identity.current](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/data-sources/caller_identity) | data source |
+| [aws_partition.current](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/data-sources/partition) | data source |
 | [aws_region.current](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/data-sources/region) | data source |
 | [aws_service_discovery_dns_namespace.existing](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/data-sources/service_discovery_dns_namespace) | data source |
 | [archive_file.lambda_layer](https://registry.terraform.io/providers/hashicorp/archive/latest/docs/data-sources/file) | data source |
@@ -576,7 +617,7 @@ For issues and questions:
 | <a name="input_existing_redis_password_secret_key"></a> [existing\_redis\_password\_secret\_key](#input\_existing\_redis\_password\_secret\_key) | Key to read from an existing JSON-encoded secret, for example `password`. Leave null when the secret's value is the password itself. Only used with `existing_redis_password_secret_arn`. | `string` | `null` | no |
 | <a name="input_existing_service_discovery_namespace_type"></a> [existing\_service\_discovery\_namespace\_type](#input\_existing\_service\_discovery\_namespace\_type) | Type of the existing CloudMap namespace to look up: `DNS_PRIVATE` or `DNS_PUBLIC`. Only used when `create_service_discovery_namespace` is false. | `string` | `"DNS_PRIVATE"` | no |
 | <a name="input_existing_service_discovery_namespace_name"></a> [existing\_service\_discovery\_namespace\_name](#input\_existing\_service\_discovery\_namespace\_name) | Name of an existing CloudMap private DNS namespace to register the Redis service in. Required when `create_service_discovery_namespace` is false, ignored otherwise. The namespace must already exist when this module is planned. | `string` | `null` | no |
-| <a name="input_existing_ecs_cluster_name"></a> [existing\_ecs\_cluster\_name](#input\_existing\_ecs\_cluster\_name) | Name of an existing ECS cluster to deploy the Redis service into. Required when `create_ecs_cluster` is false, ignored otherwise. The cluster must already exist when this module is planned. | `string` | `null` | no |
+| <a name="input_existing_ecs_cluster_name"></a> [existing\_ecs\_cluster\_name](#input\_existing\_ecs\_cluster\_name) | Name of an existing ECS cluster to deploy the Redis service into. Required when `create_ecs_cluster` is false, ignored otherwise. | `string` | `null` | no |
 | <a name="input_lambda_layer_build_image"></a> [lambda\_layer\_build\_image](#input\_lambda\_layer\_build\_image) | Container image used to build the Lambda layer when the build method resolves to Docker. | `string` | `"public.ecr.aws/sam/build-python3.11"` | no |
 | <a name="input_lambda_layer_build_interpreter"></a> [lambda\_layer\_build\_interpreter](#input\_lambda\_layer\_build\_interpreter) | Interpreter used to run `lambda/build_layer.sh`, which builds the Lambda layer. The default needs `bash` on PATH - on Windows, Git Bash satisfies this. | `list(string)` | <pre>[<br/>  "bash",<br/>  "-c"<br/>]</pre> | no |
 | <a name="input_lambda_layer_build_method"></a> [lambda\_layer\_build\_method](#input\_lambda\_layer\_build\_method) | How to build the Lambda layer: `docker` builds it in a container matching the Lambda runtime, `python` uses the host's pip, and `auto` prefers Docker and falls back to pip. Docker needs nothing installed beyond Docker itself and is the only option that guarantees Linux/x86\_64 wheels. | `string` | `"auto"` | no |

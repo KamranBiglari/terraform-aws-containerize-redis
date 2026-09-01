@@ -9,7 +9,12 @@ locals {
   aws_region         = var.aws_region != null ? var.aws_region : data.aws_region.current.name
 
   # Cluster the Redis service runs on: either the one this module creates or an existing one
-  ecs_cluster_arn  = var.create_ecs_cluster ? aws_ecs_cluster.redis_cluster[0].arn : data.aws_ecs_cluster.existing[0].arn
+  # Built from the name rather than looked up: a data source read is deferred to
+  # apply whenever its arguments are not known at plan time, and an unknown cluster
+  # ARN forces the ECS service - where `cluster` is ForceNew - to be replaced on
+  # every apply. Deriving it keeps the value known, and lets the cluster be created
+  # elsewhere in the same apply.
+  ecs_cluster_arn  = var.create_ecs_cluster ? aws_ecs_cluster.redis_cluster[0].arn : "arn:${data.aws_partition.current.partition}:ecs:${local.aws_region}:${data.aws_caller_identity.current.account_id}:cluster/${var.existing_ecs_cluster_name}"
   ecs_cluster_name = var.create_ecs_cluster ? aws_ecs_cluster.redis_cluster[0].name : var.existing_ecs_cluster_name
 
   # Namespace the Redis service registers in: either the one this module creates or an existing one
