@@ -644,6 +644,8 @@ resource "null_resource" "build_lambda_layer" {
   triggers = {
     requirements = filemd5("${path.module}/lambda/requirements.txt")
     build_script = filemd5("${path.module}/lambda/build_layer.sh")
+    build_method = var.lambda_layer_build_method
+    build_image  = var.lambda_layer_build_image
 
     # The built layer is not part of the module source, so a module directory that
     # was just downloaded (a new machine, a CI runner, a cleaned .terraform) has no
@@ -669,6 +671,11 @@ resource "null_resource" "build_lambda_layer" {
     # with a bare "Permission denied".
     command     = "bash ./lambda/build_layer.sh"
     working_dir = path.module
+
+    environment = {
+      LAYER_BUILD_METHOD = var.lambda_layer_build_method
+      LAYER_BUILD_IMAGE  = var.lambda_layer_build_image
+    }
   }
 }
 

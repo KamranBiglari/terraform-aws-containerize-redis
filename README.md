@@ -298,6 +298,22 @@ There is a small window on a restart: the replaced tasks accept connections from
 the moment they start until the Lambda revokes access. Keep `allowed_cidr_blocks`
 as tight as possible.
 
+### Building the initialization Lambda layer
+
+`enable_cluster_init` needs a Lambda layer containing `redis-py`, which is built
+locally during `terraform apply` by `lambda/build_layer.sh`. The layer is not part
+of the module source, so it is rebuilt whenever it is missing.
+
+By default (`lambda_layer_build_method = "auto"`) the build runs in a container
+and needs nothing on the machine except `bash` and Docker. Without Docker it falls
+back to the host's `python3`/`pip`, which is convenient locally but depends on what
+the machine has installed - and off Linux/x86\_64 it can install wheels the Lambda
+runtime cannot load. Set the method to `docker` to fail loudly instead of falling
+back, or to `python` to skip Docker entirely.
+
+CI runners generally have Docker (`ubuntu-latest` does), so `auto` resolves to the
+container build there.
+
 ### Subnet Selection
 
 **Best Practice:** Use private subnets for Redis cluster
@@ -561,7 +577,9 @@ For issues and questions:
 | <a name="input_existing_service_discovery_namespace_type"></a> [existing\_service\_discovery\_namespace\_type](#input\_existing\_service\_discovery\_namespace\_type) | Type of the existing CloudMap namespace to look up: `DNS_PRIVATE` or `DNS_PUBLIC`. Only used when `create_service_discovery_namespace` is false. | `string` | `"DNS_PRIVATE"` | no |
 | <a name="input_existing_service_discovery_namespace_name"></a> [existing\_service\_discovery\_namespace\_name](#input\_existing\_service\_discovery\_namespace\_name) | Name of an existing CloudMap private DNS namespace to register the Redis service in. Required when `create_service_discovery_namespace` is false, ignored otherwise. The namespace must already exist when this module is planned. | `string` | `null` | no |
 | <a name="input_existing_ecs_cluster_name"></a> [existing\_ecs\_cluster\_name](#input\_existing\_ecs\_cluster\_name) | Name of an existing ECS cluster to deploy the Redis service into. Required when `create_ecs_cluster` is false, ignored otherwise. The cluster must already exist when this module is planned. | `string` | `null` | no |
-| <a name="input_lambda_layer_build_interpreter"></a> [lambda\_layer\_build\_interpreter](#input\_lambda\_layer\_build\_interpreter) | Interpreter used to run `lambda/build_layer.sh`, which builds the Lambda layer locally. The default needs `bash` and `python3` (or `python`) on PATH - on Windows, Git Bash satisfies this. | `list(string)` | <pre>[<br/>  "bash",<br/>  "-c"<br/>]</pre> | no |
+| <a name="input_lambda_layer_build_image"></a> [lambda\_layer\_build\_image](#input\_lambda\_layer\_build\_image) | Container image used to build the Lambda layer when the build method resolves to Docker. | `string` | `"public.ecr.aws/sam/build-python3.11"` | no |
+| <a name="input_lambda_layer_build_interpreter"></a> [lambda\_layer\_build\_interpreter](#input\_lambda\_layer\_build\_interpreter) | Interpreter used to run `lambda/build_layer.sh`, which builds the Lambda layer. The default needs `bash` on PATH - on Windows, Git Bash satisfies this. | `list(string)` | <pre>[<br/>  "bash",<br/>  "-c"<br/>]</pre> | no |
+| <a name="input_lambda_layer_build_method"></a> [lambda\_layer\_build\_method](#input\_lambda\_layer\_build\_method) | How to build the Lambda layer: `docker` builds it in a container matching the Lambda runtime, `python` uses the host's pip, and `auto` prefers Docker and falls back to pip. Docker needs nothing installed beyond Docker itself and is the only option that guarantees Linux/x86\_64 wheels. | `string` | `"auto"` | no |
 | <a name="input_log_retention_days"></a> [log\_retention\_days](#input\_log\_retention\_days) | CloudWatch log retention in days | `number` | `7` | no |
 | <a name="input_redis_cluster_port"></a> [redis\_cluster\_port](#input\_redis\_cluster\_port) | Port for the Redis Cluster bus. Defaults to `redis_port` + 10000, which is the offset Redis itself uses when `cluster-port` is unset. | `number` | `null` | no |
 | <a name="input_redis_environment_variables"></a> [redis\_environment\_variables](#input\_redis\_environment\_variables) | Additional environment variables for Redis containers | <pre>list(object({<br/>    name  = string<br/>    value = string<br/>  }))</pre> | `[]` | no |

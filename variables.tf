@@ -244,8 +244,25 @@ variable "cluster_init_timeout" {
   }
 }
 
+variable "lambda_layer_build_method" {
+  description = "How to build the Lambda layer: `docker` builds it in a container matching the Lambda runtime, `python` uses the host's pip, and `auto` prefers Docker and falls back to pip. Docker needs nothing installed beyond Docker itself and is the only option that guarantees Linux/x86_64 wheels."
+  type        = string
+  default     = "auto"
+
+  validation {
+    condition     = contains(["auto", "docker", "python"], var.lambda_layer_build_method)
+    error_message = "Build method must be one of: auto, docker, python."
+  }
+}
+
+variable "lambda_layer_build_image" {
+  description = "Container image used to build the Lambda layer when the build method resolves to Docker."
+  type        = string
+  default     = "public.ecr.aws/sam/build-python3.11"
+}
+
 variable "lambda_layer_build_interpreter" {
-  description = "Interpreter used to run `lambda/build_layer.sh`, which builds the Lambda layer locally. The default needs `bash` and `python3` (or `python`) on PATH - on Windows, Git Bash satisfies this."
+  description = "Interpreter used to run `lambda/build_layer.sh`, which builds the Lambda layer. The default needs `bash` on PATH - on Windows, Git Bash satisfies this."
   type        = list(string)
   default     = ["bash", "-c"]
 }
