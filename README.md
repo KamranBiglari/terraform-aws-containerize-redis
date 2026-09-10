@@ -270,6 +270,37 @@ build image.
 CI runners generally have Docker (`ubuntu-latest` does), so `auto` resolves to the
 container build there.
 
+### Forcing a rebuild
+
+Initialization refuses to run when the nodes already hold keys - Redis cannot form a
+cluster out of non-empty nodes, and `CLUSTER RESET` will not clear a master that
+holds data. That failure looks like:
+
+```
+Refusing to create the cluster because some nodes are not empty:
+10.44.4.253:6379 holds 1236 key(s) in database 0
+```
+
+It usually means clients reached the nodes before the cluster was formed. To rebuild
+anyway, invoke the Lambda with `force_recreate`:
+
+```bash
+aws lambda invoke \
+  --function-name <cluster-name>-redis-cluster-init \
+  --payload '{"force_recreate": true}' \
+  --cli-binary-format raw-in-base64-out \
+  response.json
+```
+
+With the flag set the Lambda flushes every node, resets any existing cluster state
+and forms the cluster from scratch - **including when the cluster is currently
+healthy**, which is what makes it useful for starting over. Everything on those
+nodes is erased.
+
+The flag is only read from the invocation payload. The EventBridge rule that runs
+initialization on each deployment never sets it, so automatic runs stay
+non-destructive and keep failing loudly on non-empty nodes.
+
 ### Manual Initialization
 
 If you prefer manual control or automatic initialization fails:

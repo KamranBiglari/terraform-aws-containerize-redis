@@ -38,10 +38,18 @@ def handler(event, context):
         cidr for cidr in os.environ.get('ALLOWED_CIDR_BLOCKS', '').split(',') if cidr
     ]
 
+    # Opt-in flag from the invocation payload: {"force_recreate": true}. EventBridge
+    # events never carry it, so scheduled initializations stay non-destructive.
+    payload = event if isinstance(event, dict) else {}
+    force_recreate = is_truthy(payload.get('force_recreate', payload.get('force', False)))
+
     total_nodes = master_count + replica_count
     replicas_per_master = replica_count // master_count if master_count > 0 else 0
 
     print(f"Cluster configuration: {master_count} masters, {replica_count} replicas ({replicas_per_master} per master)")
+
+    if force_recreate:
+        print("FORCE RECREATE requested: any existing cluster will be rebuilt and ALL DATA on the nodes will be erased")
 
     try:
         # A cluster that is already healthy needs no work, and must not have its
@@ -53,7 +61,7 @@ def handler(event, context):
             print(f"Could not discover nodes yet: {e}")
             task_arns, node_ips = [], []
 
-        if node_ips and is_cluster_initialized(node_ips[0], redis_port):
+        if node_ips and not force_recreate and is_cluster_initialized(node_ips[0], redis_port):
             print("Redis cluster is already initialized")
             authorize_client_access(security_group_id, allowed_cidr_blocks, redis_port, client_rule_desc)
             return {
@@ -85,7 +93,7 @@ def handler(event, context):
 
         # Create cluster by connecting directly to Redis nodes
         print("Initializing Redis cluster...")
-        create_cluster_direct(node_ips, replicas_per_master, redis_port)
+        create_cluster_direct(node_ips, replicas_per_master, redis_port, force=force_recreate)
 
         # Cluster is healthy - let clients back in
         authorize_client_access(security_group_id, allowed_cidr_blocks, redis_port, client_rule_desc)
@@ -93,7 +101,9 @@ def handler(event, context):
         print("Redis cluster initialized successfully!")
         return {
             'statusCode': 200,
-            'body': json.dumps('Cluster initialized successfully')
+            'body': json.dumps(
+                'Cluster recreated successfully' if force_recreate else 'Cluster initialized successfully'
+            )
         }
 
     except Exception as e:
@@ -103,6 +113,13 @@ def handler(event, context):
         # Client access stays revoked: an unclustered or half-clustered fleet must
         # not be reachable, and the next steady-state event retries from scratch.
         raise
+
+
+def is_truthy(value) -> bool:
+    """Accept true/"true"/1 from a JSON payload without treating "false" as true."""
+    if isinstance(value, str):
+        return value.strip().lower() in ('true', '1', 'yes')
+    return bool(value)
 
 
 def get_redis_password():
@@ -314,7 +331,7 @@ def parse_cluster_info(raw) -> Dict[str, str]:
     return info
 
 
-def assert_nodes_empty(node_ips: List[str], redis_port: int):
+def assert_nodes_empty(node_ips: List[str], redis_port: int, force: bool = False):
     """
     Verify every node is a fresh, empty instance before forming the cluster.
 
@@ -322,6 +339,10 @@ def assert_nodes_empty(node_ips: List[str], redis_port: int):
     already know about other nodes, and CLUSTER RESET will not clear a master
     that holds keys. Failing here with a clear message beats failing halfway
     through CLUSTER MEET with a cluster in a half-formed state.
+
+    With force=True the keys are flushed instead of raising. That destroys
+    whatever the nodes are holding, so it only happens when the invocation asked
+    for it explicitly.
     """
     import redis
 
@@ -340,7 +361,10 @@ def assert_nodes_empty(node_ips: List[str], redis_port: int):
             f"slots assigned: {slots_assigned}"
         )
 
-        if db_size > 0:
+        if db_size > 0 and force:
+            print(f"FORCE: flushing {db_size} key(s) from {ip}:{redis_port}")
+            node_conn.execute_command('FLUSHALL')
+        elif db_size > 0:
             problems.append(
                 f"{ip}:{redis_port} holds {db_size} key(s) in database 0"
             )
@@ -352,14 +376,15 @@ def assert_nodes_empty(node_ips: List[str], redis_port: int):
         raise RuntimeError(
             "Refusing to create the cluster because some nodes are not empty: "
             + "; ".join(problems)
-            + ". Redis can only form a cluster from empty nodes. Flush the data "
-              "(or replace the tasks) and re-run the initialization."
+            + ". Redis can only form a cluster from empty nodes. Re-run the "
+              "initialization with {\"force_recreate\": true} to flush the nodes "
+              "first, or replace the tasks."
         )
 
     print(f"All {len(node_ips)} nodes are empty and ready to be clustered")
 
 
-def create_cluster_direct(node_ips: List[str], replicas_per_master: int, redis_port: int = 6379):
+def create_cluster_direct(node_ips: List[str], replicas_per_master: int, redis_port: int = 6379, force: bool = False):
     """
     Create Redis cluster by using Python redis library to connect directly to nodes.
     Lambda is in the same VPC as the Redis tasks, so it can reach them.
@@ -371,8 +396,8 @@ def create_cluster_direct(node_ips: List[str], replicas_per_master: int, redis_p
         print(f"Replicas per master: {replicas_per_master}")
         print(f"Redis port: {redis_port}")
 
-        # Refuse to touch nodes that already hold data
-        assert_nodes_empty(node_ips, redis_port)
+        # Refuse to touch nodes that already hold data, unless asked to flush them
+        assert_nodes_empty(node_ips, redis_port, force=force)
 
         # First, reset all nodes to clean state in case of previous failed attempts
         print("Resetting all nodes to clean state...")
@@ -383,8 +408,9 @@ def create_cluster_direct(node_ips: List[str], replicas_per_master: int, redis_p
                 cluster_info = node_conn.execute_command('CLUSTER', 'INFO')
                 cluster_info_str = cluster_info.decode('utf-8') if isinstance(cluster_info, bytes) else str(cluster_info)
 
-                # Only reset if cluster is not in a good state
-                if 'cluster_state:ok' not in cluster_info_str or 'cluster_slots_assigned:16384' not in cluster_info_str:
+                # Only reset if cluster is not in a good state - or if forced, where
+                # a healthy cluster is exactly what we are tearing down.
+                if force or 'cluster_state:ok' not in cluster_info_str or 'cluster_slots_assigned:16384' not in cluster_info_str:
                     print(f"Resetting node {ip}...")
                     node_conn.execute_command('CLUSTER', 'RESET', 'HARD')
                     time.sleep(1)
