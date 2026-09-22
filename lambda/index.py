@@ -38,10 +38,12 @@ def handler(event, context):
         cidr for cidr in os.environ.get('ALLOWED_CIDR_BLOCKS', '').split(',') if cidr
     ]
 
-    # Opt-in flag from the invocation payload: {"force_recreate": true}. EventBridge
-    # events never carry it, so scheduled initializations stay non-destructive.
+    # Force flag: the invocation payload wins when it says anything at all,
+    # otherwise the FORCE_CLUSTER_RECREATE environment default applies. That lets
+    # {"force_recreate": false} switch off an environment default, and lets an
+    # environment default reach the EventBridge invocations, which carry no payload.
     payload = event if isinstance(event, dict) else {}
-    force_recreate = is_truthy(payload.get('force_recreate', payload.get('force', False)))
+    force_recreate, force_source = resolve_force_recreate(payload)
 
     total_nodes = master_count + replica_count
     replicas_per_master = replica_count // master_count if master_count > 0 else 0
@@ -49,7 +51,10 @@ def handler(event, context):
     print(f"Cluster configuration: {master_count} masters, {replica_count} replicas ({replicas_per_master} per master)")
 
     if force_recreate:
-        print("FORCE RECREATE requested: any existing cluster will be rebuilt and ALL DATA on the nodes will be erased")
+        print(
+            f"FORCE RECREATE requested via {force_source}: any existing cluster will be "
+            "rebuilt and ALL DATA on the nodes will be erased"
+        )
 
     try:
         # A cluster that is already healthy needs no work, and must not have its
@@ -120,6 +125,25 @@ def is_truthy(value) -> bool:
     if isinstance(value, str):
         return value.strip().lower() in ('true', '1', 'yes')
     return bool(value)
+
+
+def resolve_force_recreate(payload: dict) -> Tuple[bool, str]:
+    """
+    Decide whether to force a rebuild, and say where the decision came from.
+
+    An explicit value in the payload wins in both directions, so a one-off
+    invocation can force a rebuild in an environment that does not default to it,
+    and can also switch off an environment that does. EventBridge invocations carry
+    no payload, so they follow the environment default.
+    """
+    if 'force_recreate' in payload or 'force' in payload:
+        value = payload.get('force_recreate', payload.get('force'))
+        return is_truthy(value), 'invocation payload'
+
+    return (
+        is_truthy(os.environ.get('FORCE_CLUSTER_RECREATE', 'false')),
+        'FORCE_CLUSTER_RECREATE environment variable',
+    )
 
 
 def get_redis_password():

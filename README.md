@@ -297,9 +297,25 @@ and forms the cluster from scratch - **including when the cluster is currently
 healthy**, which is what makes it useful for starting over. Everything on those
 nodes is erased.
 
-The flag is only read from the invocation payload. The EventBridge rule that runs
-initialization on each deployment never sets it, so automatic runs stay
-non-destructive and keep failing loudly on non-empty nodes.
+The EventBridge rule that runs initialization on each deployment sends no payload,
+so automatic runs stay non-destructive and keep failing loudly on non-empty nodes.
+
+For a disposable environment where that is the wrong default - a CI stack that
+should always come up clean, say - set the behaviour module-wide instead:
+
+```hcl
+force_cluster_recreate = true
+```
+
+That sets `FORCE_CLUSTER_RECREATE` on the Lambda and applies to every
+initialization, **including the automatic ones**, so every deployment flushes the
+nodes and rebuilds. Leave it at its `false` default for anything holding data you
+care about.
+
+A value in the invocation payload always wins over the environment default, in both
+directions: `{"force_recreate": true}` forces a rebuild where the default is
+`false`, and `{"force_recreate": false}` runs a normal, non-destructive
+initialization where the default is `true`.
 
 ### Manual Initialization
 
@@ -712,6 +728,7 @@ For issues and questions:
 | <a name="input_existing_redis_password_secret_key"></a> [existing\_redis\_password\_secret\_key](#input\_existing\_redis\_password\_secret\_key) | Key to read from an existing JSON-encoded secret, for example `password`. Leave null when the secret's value is the password itself. Only used with `existing_redis_password_secret_arn`. | `string` | `null` | no |
 | <a name="input_existing_service_discovery_namespace_name"></a> [existing\_service\_discovery\_namespace\_name](#input\_existing\_service\_discovery\_namespace\_name) | Name of an existing CloudMap private DNS namespace to register the Redis service in. Required when `create_service_discovery_namespace` is false, ignored otherwise. The namespace must already exist when this module is planned. | `string` | `null` | no |
 | <a name="input_existing_service_discovery_namespace_type"></a> [existing\_service\_discovery\_namespace\_type](#input\_existing\_service\_discovery\_namespace\_type) | Type of the existing CloudMap namespace to look up: `DNS_PRIVATE` or `DNS_PUBLIC`. Only used when `create_service_discovery_namespace` is false. | `string` | `"DNS_PRIVATE"` | no |
+| <a name="input_force_cluster_recreate"></a> [force\_cluster\_recreate](#input\_force\_cluster\_recreate) | Default for the initialization Lambda's force-recreate behaviour. When true, every initialization flushes all keys and rebuilds the cluster even if it is healthy, which means DATA LOSS on every deployment - intended for disposable environments. A `force_recreate` value in the invocation payload overrides this either way. | `bool` | `false` | no |
 | <a name="input_lambda_layer_build_image"></a> [lambda\_layer\_build\_image](#input\_lambda\_layer\_build\_image) | Container image used to build the Lambda layer when the build method resolves to Docker. | `string` | `"public.ecr.aws/sam/build-python3.11"` | no |
 | <a name="input_lambda_layer_build_interpreter"></a> [lambda\_layer\_build\_interpreter](#input\_lambda\_layer\_build\_interpreter) | Interpreter used to run `lambda/build_layer.sh`, which builds the Lambda layer. The default needs `bash` on PATH - on Windows, Git Bash satisfies this. | `list(string)` | <pre>[<br/>  "bash",<br/>  "-c"<br/>]</pre> | no |
 | <a name="input_lambda_layer_build_method"></a> [lambda\_layer\_build\_method](#input\_lambda\_layer\_build\_method) | How to build the Lambda layer: `docker` builds it in a container matching the Lambda runtime, `python` uses the host's pip, and `auto` prefers Docker and falls back to pip. Docker needs nothing installed beyond Docker itself and is the only option that guarantees Linux/x86\_64 wheels. | `string` | `"auto"` | no |

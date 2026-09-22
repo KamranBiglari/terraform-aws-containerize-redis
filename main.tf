@@ -498,6 +498,7 @@ resource "aws_lambda_function" "redis_cluster_init" {
       SECURITY_GROUP_ID         = aws_security_group.redis_cluster.id
       ALLOWED_CIDR_BLOCKS       = join(",", var.allowed_cidr_blocks)
       CLIENT_RULE_DESC          = local.redis_client_rule_description
+      FORCE_CLUSTER_RECREATE    = var.force_cluster_recreate ? "true" : "false"
       REDIS_PASSWORD_SECRET_ARN = local.redis_auth_enabled ? local.redis_password_secret_arn : ""
       REDIS_PASSWORD_SECRET_KEY = var.create_redis_password_secret ? local.redis_password_secret_json_key : (var.existing_redis_password_secret_key == null ? "" : var.existing_redis_password_secret_key)
       REDIS_PORT                = tostring(local.redis_port)

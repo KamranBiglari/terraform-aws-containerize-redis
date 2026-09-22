@@ -303,3 +303,9 @@ variable "existing_redis_password_secret_key" {
   type        = string
   default     = null
 }
+
+variable "force_cluster_recreate" {
+  description = "Default for the initialization Lambda's force-recreate behaviour. When true, every initialization flushes all keys and rebuilds the cluster even if it is healthy, which means DATA LOSS on every deployment - intended for disposable environments. A `force_recreate` value in the invocation payload overrides this either way."
+  type        = bool
+  default     = false
+}

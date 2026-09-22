@@ -298,9 +298,25 @@ and forms the cluster from scratch - **including when the cluster is currently
 healthy**, which is what makes it useful for starting over. Everything on those
 nodes is erased.
 
-The flag is only read from the invocation payload. The EventBridge rule that runs
-initialization on each deployment never sets it, so automatic runs stay
-non-destructive and keep failing loudly on non-empty nodes.
+The EventBridge rule that runs initialization on each deployment sends no payload,
+so automatic runs stay non-destructive and keep failing loudly on non-empty nodes.
+
+For a disposable environment where that is the wrong default - a CI stack that
+should always come up clean, say - set the behaviour module-wide instead:
+
+```hcl
+force_cluster_recreate = true
+```
+
+That sets `FORCE_CLUSTER_RECREATE` on the Lambda and applies to every
+initialization, **including the automatic ones**, so every deployment flushes the
+nodes and rebuilds. Leave it at its `false` default for anything holding data you
+care about.
+
+A value in the invocation payload always wins over the environment default, in both
+directions: `{"force_recreate": true}` forces a rebuild where the default is
+`false`, and `{"force_recreate": false}` runs a normal, non-destructive
+initialization where the default is `true`.
 
 ### Manual Initialization
 
